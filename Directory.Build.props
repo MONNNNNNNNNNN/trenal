@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- PowerShell 7.6 LTS; its SDK targets net10.0 (also LTS). -->
+    <PowerShellSdkVersion>7.6.6</PowerShellSdkVersion>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform-neutral PowerShell host: key parsing, line editor, PSHost over a VT terminal.
+       Runs unchanged on iOS (Mono interpreter) and on desktop (Trenal.Cli, used for tests). -->
+  <PropertyGroup>
+    <!-- net8.0 exists only so CI can run the selftest on desktop Mono in interpreter-only mode:
+         .NET 10 no longer ships a desktop Mono runtime pack, iOS still runs on Mono. -->
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PowerShellSdkVersion>7.4.*</PowerShellSdkVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.PowerShell.SDK" Version="$(PowerShellSdkVersion)" />
+    <EmbeddedResource Include="startup.ps1" LogicalName="Trenal.startup.ps1" />
+  </ItemGroup>
+</Project>

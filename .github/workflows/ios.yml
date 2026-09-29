@@ -1,0 +1,64 @@
+name: ios
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # publish the "latest" release from main
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_[0-9]*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install iOS workload
+        run: dotnet workload install ios
+
+      - name: Build libpsl-native.framework
+        run: native/build-psl-native-ios.sh
+
+      # Unsigned on purpose: SideStore / AltStore / Sideloadly re-sign with your own Apple ID.
+      - name: Build app
+        run: dotnet build src/Trenal.iOS -c Release -p:EnableCodeSigning=false
+
+      - name: Package IPA
+        run: |
+          APP=$(find src/Trenal.iOS/bin/Release -maxdepth 4 -type d -name '*.app' | head -1)
+          echo "app: $APP"
+          du -sh "$APP"
+          ls "$APP/Frameworks" "$APP/Modules"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          (cd out && zip -qry trenal.ipa Payload)
+          ls -la out/trenal.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trenal-ipa
+          path: out/trenal.ipa
+
+      # A stable URL to open in Safari on the iPad and hand to SideStore.
+      - name: Publish latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest out/trenal.ipa --prerelease --title "trenal (latest main)" \
+            --notes "Unsigned build of ${GITHUB_SHA::7}. Install with SideStore, AltStore or Sideloadly."

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier>ios-arm64</RuntimeIdentifier>
+    <SupportedOSPlatformVersion>16.0</SupportedOSPlatformVersion>
+    <ApplicationId>dev.trenal.app</ApplicationId>
+    <ApplicationTitle>trenal</ApplicationTitle>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <!-- iOS forbids JIT. Interpret everything with Mono's interpreter, including the code PowerShell
+         generates at runtime (compiled script blocks, classes via Reflection.Emit, Add-Type, binary
+         modules). The CI selftest runs Trenal.Core in this exact mode on desktop Mono. -->
+    <UseInterpreter>true</UseInterpreter>
+    <MtouchInterpreter>all</MtouchInterpreter>
+    <!-- Scripts can reach any .NET API ([IO.File]::..., [Text.Json...]), so nothing may be trimmed. -->
+    <MtouchLink>None</MtouchLink>
+
+    <!-- SDK/workload warnings vary by Xcode version; don't fail the device build on them. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />
+    <!-- Built by native/build-psl-native-ios.sh -->
+    <NativeReference Include="../../native/out/libpsl-native.framework">
+      <Kind>Framework</Kind>
+      <SmartLink>false</SmartLink>
+    </NativeReference>
+  </ItemGroup>
+
+  <!-- PowerShell's built-in modules (Utility, Management, Security, Host) ship as package content;
+       bundle them at <app>/Modules, which the app puts on PSModulePath. -->
+  <ItemGroup>
+    <BundleResource Include="$(NuGetPackageRoot)microsoft.powershell.sdk/$(PowerShellSdkVersion)/contentFiles/any/any/runtimes/unix/lib/net10.0/Modules/**/*"
+                    LogicalName="Modules/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Terminal UI: xterm.js rendered in a WKWebView from files inside the app. Nothing is fetched at runtime. -->
+  <ItemGroup>
+    <BundleResource Include="web/index.html" LogicalName="web/index.html" />
+    <BundleResource Include="web/term.js" LogicalName="web/term.js" />
+    <BundleResource Include="web/term.css" LogicalName="web/term.css" />
+    <BundleResource Include="web/node_modules/@xterm/xterm/lib/xterm.js" LogicalName="web/vendor/xterm.js" />
+    <BundleResource Include="web/node_modules/@xterm/xterm/css/xterm.css" LogicalName="web/vendor/xterm.css" />
+    <BundleResource Include="web/node_modules/@xterm/addon-fit/lib/addon-fit.js" LogicalName="web/vendor/addon-fit.js" />
+    <BundleResource Include="web/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js" LogicalName="web/vendor/addon-unicode11.js" />
+  </ItemGroup>
+
+  <Target Name="RestoreXterm" BeforeTargets="BeforeBuild" Condition="!Exists('web/node_modules/@xterm/xterm/lib/xterm.js')">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="web" />
+  </Target>
+</Project>

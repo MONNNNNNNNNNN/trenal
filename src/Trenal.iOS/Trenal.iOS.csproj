@@ -30,6 +30,13 @@
     </NativeReference>
   </ItemGroup>
 
+  <!-- With trimming off, the framework's Unix process/terminal code keeps a P/Invoke into System.Native
+       that the iOS build of that library doesn't export. iOS can't start processes, so the call can't
+       happen in practice; stop the linker from requiring the symbol. -->
+  <ItemGroup>
+    <ReferenceNativeSymbol Include="SystemNative_ConfigureTerminalForChildProcess" SymbolType="Function" SymbolMode="Ignore" />
+  </ItemGroup>
+
   <!-- PowerShell's built-in modules (Utility, Management, Security, Host) ship as package content;
        bundle them at <app>/Modules, which the app puts on PSModulePath. -->
   <ItemGroup>

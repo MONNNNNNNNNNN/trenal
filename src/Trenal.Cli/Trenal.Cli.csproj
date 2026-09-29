@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Desktop harness for Trenal.Core: interactive in a raw tty, or with the selftest flag for CI.
+       Build with Mono=true and run with MONO_ENV_OPTIONS=(double-dash)interpreter to mimic iOS (no JIT). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <AssemblyName>trenal</AssemblyName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Mono)' == 'true' And '$(TargetFramework)' == 'net8.0'">
+    <UseMonoRuntime>true</UseMonoRuntime>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />
+  </ItemGroup>
+</Project>

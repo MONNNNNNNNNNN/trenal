@@ -1,0 +1,33 @@
+name: core
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build src/Trenal.Cli -c Release
+
+      - name: Selftest (CoreCLR, PowerShell 7.6)
+        run: dotnet src/Trenal.Cli/bin/Release/net10.0/trenal.dll --selftest
+        env:
+          TRENAL_SELFTEST_NET: '1'
+
+      # iOS has no JIT. Desktop Mono in interpreter-only mode is the closest thing Linux can run,
+      # so every PowerShell code path the app relies on is exercised without JIT here.
+      - name: Selftest (Mono, interpreter only)
+        run: |
+          dotnet publish src/Trenal.Cli -c Release -f net8.0 -p:Mono=true -o out/mono
+          MONO_ENV_OPTIONS=--interpreter out/mono/trenal --selftest

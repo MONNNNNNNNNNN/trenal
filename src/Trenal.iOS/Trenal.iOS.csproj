@@ -48,7 +48,7 @@
     <BundleResource Include="web/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js" LogicalName="web/vendor/addon-unicode11.js" />
   </ItemGroup>
 
-  <Target Name="RestoreXterm" BeforeTargets="BeforeBuild" Condition="!Exists('web/node_modules/@xterm/xterm/lib/xterm.js')">
+  <Target Name="RestoreXterm" BeforeTargets="PrepareForBuild" Condition="!Exists('web/node_modules/@xterm/xterm/lib/xterm.js')">
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="web" />
   </Target>
 </Project>

@@ -42,6 +42,10 @@ jobs:
       - name: Build libpsl-native.framework
         run: native/build-psl-native-ios.sh
 
+      - name: Fetch xterm.js
+        run: npm ci --no-audit --no-fund
+        working-directory: src/Trenal.iOS/web
+
       # Unsigned on purpose: SideStore / AltStore / Sideloadly re-sign with your own Apple ID.
       - name: Build app
         run: dotnet build src/Trenal.iOS -c Release -p:EnableCodeSigning=false

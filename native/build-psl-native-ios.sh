@@ -17,6 +17,8 @@ SRC="$WORK/src/src/libpsl-native"
 
 # Upstream builds with -Werror; newer iOS SDKs deprecate a few POSIX calls it uses (fork, syscall).
 sed -i '' 's/ -Werror//' "$SRC/CMakeLists.txt"
+# The iOS SDK has no <sys/user.h>. On Apple, getppid.cpp only needs kinfo_proc, which is in <sys/sysctl.h>.
+sed -i '' 's|#include <sys/user.h>|#include <sys/sysctl.h>|' "$SRC/src/getppid.cpp"
 
 cmake -S "$SRC" -B "$WORK/build" \
   -DCMAKE_SYSTEM_NAME=iOS \

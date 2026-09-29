@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write # publish the "latest" release from main
 
+# .NET for iOS requires the exact Xcode major.minor it was built against, and the runner image
+# lags new Xcode releases. Pin the pair and bump them together.
+env:
+  XCODE_VERSION: '26.2'
+  IOS_WORKLOAD_MANIFEST: '26.2.10233/10.0.100'
+
 jobs:
   ipa:
     runs-on: macos-15
@@ -18,17 +24,20 @@ jobs:
 
       - name: Select Xcode
         run: |
-          ls -d /Applications/Xcode*.app
-          XCODE=$(ls -d /Applications/Xcode_[0-9]*.app | grep -vi beta | sort -V | tail -1)
-          sudo xcode-select -s "$XCODE"
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
           xcodebuild -version
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
-      - name: Install iOS workload
-        run: dotnet workload install ios
+      - name: Install iOS workload (pinned to match Xcode)
+        run: |
+          dotnet workload config --update-mode manifests
+          echo "{\"microsoft.net.sdk.ios\": \"${IOS_WORKLOAD_MANIFEST}\"}" > "$RUNNER_TEMP/rollback.json"
+          cat "$RUNNER_TEMP/rollback.json"
+          dotnet workload install ios --from-rollback-file "$RUNNER_TEMP/rollback.json"
+          dotnet workload list
 
       - name: Build libpsl-native.framework
         run: native/build-psl-native-ios.sh

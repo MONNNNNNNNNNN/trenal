@@ -244,4 +244,53 @@ function uname {
     else { [Runtime.InteropServices.RuntimeInformation]::OSDescription }
 }
 
-Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname
+function ssh {
+    # ssh [-p port] [-i identity] [user@]host [command...]
+    $argv = @($args); $p = @{}; $rest = @()
+    for ($i = 0; $i -lt $argv.Count; $i++) {
+        $a = [string]$argv[$i]
+        if ($rest.Count -eq 0 -and $a -ceq '-p') { $p.Port = [int]$argv[++$i] }
+        elseif ($rest.Count -eq 0 -and $a -ceq '-i') { $p.IdentityFile = $argv[++$i] }
+        elseif ($rest.Count -eq 0 -and $a -cmatch '^-[tTAqvCN46]+$') { }
+        elseif ($rest.Count -eq 0 -and $a -cmatch '^-o$') { $i++ }
+        else { $rest += $a }
+    }
+    if ($rest.Count -eq 0) { throw 'usage: ssh [-p port] [-i identity] [user@]host [command]' }
+    $p.Target = $rest[0]
+    if ($rest.Count -gt 1) { $p.Command = $rest[1..($rest.Count - 1)] }
+    Enter-SshSession @p
+}
+
+function scp {
+    # scp [-P port] [-i identity] [-r] SOURCE DEST   (one side user@host:path)
+    $argv = @(Split-Flags $args); $p = @{}; $paths = @()
+    for ($i = 0; $i -lt $argv.Count; $i++) {
+        switch -CaseSensitive ([string]$argv[$i]) {
+            '-P' { $p.Port = [int]$argv[++$i]; continue }
+            '-i' { $p.IdentityFile = $argv[++$i]; continue }
+            '-r' { $p.Recurse = $true; continue }
+            { $_ -in '-q', '-p', '-C', '-v' } { continue }
+            default { $paths += $argv[$i] }
+        }
+    }
+    if ($paths.Count -ne 2) { throw 'usage: scp [-P port] [-i identity] [-r] SOURCE DEST' }
+    Copy-SshItem -Source $paths[0] -Destination $paths[1] @p
+}
+
+function ssh-keygen {
+    # ssh-keygen [-t ed25519] [-f file] [-C comment] [-N ''] ; only ed25519 is generated
+    $argv = @($args); $p = @{}
+    for ($i = 0; $i -lt $argv.Count; $i++) {
+        switch -CaseSensitive ([string]$argv[$i]) {
+            '-f' { $p.Path = $argv[++$i]; continue }
+            '-C' { $p.Comment = $argv[++$i]; continue }
+            '-t' { $t = $argv[++$i]; if ($t -ne 'ed25519') { Write-Warning "only ed25519 keys are generated (asked for $t)" }; continue }
+            '-N' { $i++; continue }
+            '-q' { continue }
+            default { throw "ssh-keygen: unsupported option $_" }
+        }
+    }
+    New-SshKey @p
+}
+
+Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname, ssh, scp, ssh-keygen

@@ -12,6 +12,9 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="../../tests/start-sshd.sh" CopyToOutputDirectory="PreserveNewest" Link="start-sshd.sh" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />
   </ItemGroup>
 </Project>

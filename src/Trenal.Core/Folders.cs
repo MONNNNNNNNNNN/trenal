@@ -71,9 +71,12 @@ public class JsonFolderAccess(string file) : IFolderAccess
 }
 
 /// <summary>What trenal's cmdlets reach through <c>$Host.PrivateData</c>.</summary>
-public sealed class HostServices(IFolderAccess folders)
+public sealed class HostServices(IFolderAccess folders, Shell? shell)
 {
     public IFolderAccess Folders { get; } = folders;
+
+    /// <summary>The interactive shell, for commands that take over the terminal (ssh).</summary>
+    public Shell? Shell { get; } = shell;
 
     internal static HostServices From(PSCmdlet cmdlet) =>
         cmdlet.Host.PrivateData?.BaseObject as HostServices

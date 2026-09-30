@@ -17,6 +17,9 @@ jobs:
             8.0.x
             10.0.x
 
+      - name: OpenSSH server for the ssh/scp checks
+        run: sudo apt-get install -y --no-install-recommends openssh-server
+
       - name: Build
         run: dotnet build src/Trenal.Cli -c Release
 
@@ -24,10 +27,11 @@ jobs:
         run: dotnet src/Trenal.Cli/bin/Release/net10.0/trenal.dll --selftest
         env:
           TRENAL_SELFTEST_NET: '1'
+          TRENAL_SELFTEST_SSH: '1'
 
       # iOS has no JIT. Desktop Mono in interpreter-only mode is the closest thing Linux can run,
       # so every PowerShell code path the app relies on is exercised without JIT here.
       - name: Selftest (Mono, interpreter only)
         run: |
           dotnet publish src/Trenal.Cli -c Release -f net8.0 -p:Mono=true -o out/mono
-          MONO_ENV_OPTIONS=--interpreter out/mono/trenal --selftest
+          MONO_ENV_OPTIONS=--interpreter TRENAL_SELFTEST_SSH=1 out/mono/trenal --selftest

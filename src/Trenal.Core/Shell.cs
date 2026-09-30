@@ -35,6 +35,7 @@ public sealed class Shell
     readonly object state = new();
     PowerShell? running;
     bool hostReading;
+    Action<string>? rawSink;
     Runspace? runspace;
     TrenalHost? host;
 
@@ -61,6 +62,13 @@ public sealed class Shell
     /// <summary>Raw input from the terminal (UI thread).</summary>
     public void Input(string data)
     {
+        Action<string>? sink;
+        lock (state) sink = rawSink;
+        if (sink is not null)
+        {
+            sink(data);
+            return;
+        }
         List<Key> parsed;
         lock (parser) parsed = parser.Feed(data);
         var batch = new List<Key>(parsed.Count);
@@ -80,6 +88,24 @@ public sealed class Shell
             try { running.BeginStop(null, null); } catch (ObjectDisposedException) { }
             if (hostReading) keys.Add([new Key(KeyKind.Interrupt)]);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Routes terminal input straight to <paramref name="sink"/> (no line editing, Ctrl+C
+    /// included) until disposed. Used by commands that own the terminal, like interactive ssh.
+    /// </summary>
+    public IDisposable BeginRawInput(Action<string> sink)
+    {
+        lock (state) rawSink = sink;
+        return new RawScope(this);
+    }
+
+    sealed class RawScope(Shell shell) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (shell.state) shell.rawSink = null;
         }
     }
 
@@ -146,7 +172,7 @@ public sealed class Shell
 
         var folders = options.Folders ?? new JsonFolderAccess(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "trenal", "mounts.json"));
-        host = new TrenalHost(this, new HostServices(folders));
+        host = new TrenalHost(this, new HostServices(folders, this));
         var iss = InitialSessionState.CreateDefault2();
         foreach (var (name, type) in TrenalCmdlets) iss.Commands.Add(new SessionStateCmdletEntry(name, type, null));
         using var rs = RunspaceFactory.CreateRunspace(host, iss);
@@ -197,6 +223,9 @@ public sealed class Shell
         ("Mount-Folder", typeof(MountFolderCommand)),
         ("Dismount-Folder", typeof(DismountFolderCommand)),
         ("Get-MountedFolder", typeof(GetMountedFolderCommand)),
+        ("Enter-SshSession", typeof(EnterSshSessionCommand)),
+        ("Copy-SshItem", typeof(CopySshItemCommand)),
+        ("New-SshKey", typeof(NewSshKeyCommand)),
     ];
 
     void RestoreMounts(IFolderAccess folders)

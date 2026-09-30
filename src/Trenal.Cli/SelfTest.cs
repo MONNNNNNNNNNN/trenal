@@ -207,6 +207,51 @@ static class SelfTest
             Check("Invoke-RestMethod", () => { Send("(Invoke-RestMethod https://api.nuget.org/v3/index.json).version\r"); return WaitFor("3.0.0"); });
             Check("curl shim", () => { Send("(curl -sSL https://api.nuget.org/v3/index.json | ConvertFrom-Json).resources.Count -gt 0\r"); return WaitFor("True"); });
         }
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_SSH") == "1")
+        {
+            string? sshdDir = null;
+            Check("ssh-keygen", () =>
+            {
+                Send("ssh-keygen -f ~/.ssh/id_ed25519 -N '' -C selftest | Out-Null; (cat ~/.ssh/id_ed25519.pub) -match '^ssh-ed25519 '\r");
+                return WaitFor("True") && WaitFor(Prompt);
+            });
+            Check("sshd (test fixture) starts", () =>
+            {
+                var home = options.Environment["HOME"]!;
+                var script = Path.Combine(AppContext.BaseDirectory, "start-sshd.sh");
+                var p = Process.Start(new ProcessStartInfo("bash", [script, Path.Combine(home, ".ssh", "id_ed25519.pub"), "2222"])
+                    { RedirectStandardOutput = true, UseShellExecute = false })!;
+                sshdDir = p.StandardOutput.ReadToEnd().Trim();
+                p.WaitForExit();
+                return p.ExitCode == 0 && File.Exists(Path.Combine(sshdDir, "sshd.pid"));
+            });
+            Check("ssh remote command + known_hosts prompt", () =>
+            {
+                Send("ssh -p 2222 \"$(whoami)@127.0.0.1\" echo remote-'$((40+2))'\r");
+                if (!WaitFor("Are you sure you want to continue connecting")) return false;
+                Send("yes\r");
+                return WaitFor("remote-42") && WaitFor(Prompt);
+            });
+            Check("ssh interactive shell (raw passthrough)", () =>
+            {
+                Send("ssh -p 2222 \"$(whoami)@127.0.0.1\"\r");
+                Thread.Sleep(1500);
+                Send("echo inner-$((6*7))\r");
+                if (!WaitFor("inner-42")) return false;
+                Send("exit\r");
+                return WaitFor("Connection to 127.0.0.1 closed.") && WaitFor(Prompt);
+            });
+            Check("scp upload + download", () =>
+            {
+                Send("Set-Content ~/up.txt ('scp-' + 'roundtrip'); scp -P 2222 ~/up.txt \"$(whoami)@127.0.0.1:/tmp/trenal-scp.txt\"; scp -P 2222 \"$(whoami)@127.0.0.1:/tmp/trenal-scp.txt\" ~/down.txt; cat ~/down.txt\r");
+                return WaitFor("scp-roundtrip") && WaitFor(Prompt);
+            });
+            if (sshdDir is not null && File.Exists(Path.Combine(sshdDir, "sshd.pid")))
+            {
+                var pid = File.ReadAllText(Path.Combine(sshdDir, "sshd.pid")).Trim();
+                Process.Start(new ProcessStartInfo("bash", ["-c", $"kill {pid} 2>/dev/null || sudo kill {pid}"]))?.WaitForExit();
+            }
+        }
         Check("exit code", () =>
         {
             Send("exit 3\r");

@@ -11,11 +11,15 @@ public enum ReadStatus { Line, Cancelled, Interrupted, Eof }
 public readonly record struct ReadResult(ReadStatus Status, string Text);
 
 /// <summary>
-/// Minimal readline for a VT terminal: cursor editing over grapheme clusters, history, and
-/// PowerShell tab completion. PSReadLine can't be used — it drives System.Console, which iOS lacks.
+/// Readline for a VT terminal: grapheme-aware editing, history, Ctrl+R search, history-based
+/// inline suggestions, syntax colouring and PowerShell tab completion. PSReadLine can't be used:
+/// it drives System.Console, which iOS lacks.
 /// </summary>
 public sealed class LineEditor(ITerminal term, KeyQueue input)
 {
+    const string Dim = "\x1b[90m";
+    const string Reset = "\x1b[0m";
+
     readonly ITerminal term = term;
     readonly KeyQueue input = input;
     readonly List<string> history = [];
@@ -45,8 +49,18 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
         int renderedRow;
         int historyIndex;
         string stash = "";
+        bool finishing;
+
         CommandCompletion? completion;
         int completionIndex, completionStart, completionLength;
+
+        // Ctrl+R reverse incremental search
+        bool searching;
+        readonly StringBuilder query = new();
+        int searchIndex;
+        bool searchFailed;
+        string savedBuf = "";
+        int savedPos;
 
         public Session(LineEditor ed, string prompt, EditMode mode)
         {
@@ -68,6 +82,13 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
             while (true)
             {
                 var key = ed.input.Take();
+                if (searching)
+                {
+                    var (handled, result) = SearchKey(key);
+                    if (result is { } done) return done;
+                    if (handled) { Render(); continue; }
+                    // Other keys leave search with the match in the buffer, then act normally.
+                }
                 if (key.Kind is not (KeyKind.Tab or KeyKind.ShiftTab)) completion = null;
                 switch (key.Kind)
                 {
@@ -77,11 +98,11 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
                     case KeyKind.Backspace: if (pos > 0) DeleteRange(Prev(pos), pos); break;
                     case KeyKind.Delete: if (pos < buf.Length) DeleteRange(pos, Next(pos)); break;
                     case KeyKind.Left: if (pos > 0) pos = Prev(pos); break;
-                    case KeyKind.Right: if (pos < buf.Length) pos = Next(pos); break;
+                    case KeyKind.Right: if (!AcceptSuggestion(wholeLine: true) && pos < buf.Length) pos = Next(pos); break;
                     case KeyKind.Home: pos = 0; break;
-                    case KeyKind.End: pos = buf.Length; break;
+                    case KeyKind.End: if (!AcceptSuggestion(wholeLine: true)) pos = buf.Length; break;
                     case KeyKind.WordLeft: pos = WordLeft(pos); break;
-                    case KeyKind.WordRight: pos = WordRight(pos); break;
+                    case KeyKind.WordRight: if (!AcceptSuggestion(wholeLine: false)) pos = WordRight(pos); break;
                     case KeyKind.DeleteWordBack: DeleteRange(WordLeft(pos), pos); break;
                     case KeyKind.Up when IsCommand: HistoryMove(-1); break;
                     case KeyKind.Down when IsCommand: HistoryMove(+1); break;
@@ -96,14 +117,15 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
                             case 'd' when buf.Length == 0: return Finish(ReadStatus.Eof, "");
                             case 'd': if (pos < buf.Length) DeleteRange(pos, Next(pos)); break;
                             case 'a': pos = 0; break;
-                            case 'e': pos = buf.Length; break;
+                            case 'e': if (!AcceptSuggestion(wholeLine: true)) pos = buf.Length; break;
                             case 'b': if (pos > 0) pos = Prev(pos); break;
-                            case 'f': if (pos < buf.Length) pos = Next(pos); break;
+                            case 'f': if (!AcceptSuggestion(wholeLine: true) && pos < buf.Length) pos = Next(pos); break;
                             case 'k': DeleteRange(pos, buf.Length); break;
                             case 'u': DeleteRange(0, pos); break;
                             case 'w': DeleteRange(WordLeft(pos), pos); break;
                             case 'p' when IsCommand: HistoryMove(-1); break;
                             case 'n' when IsCommand: HistoryMove(+1); break;
+                            case 'r' when IsCommand: StartSearch(); break;
                             case 'l':
                                 ed.term.Write("\x1b[2J\x1b[3J\x1b[H");
                                 renderedRow = 0;
@@ -117,11 +139,104 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
 
         ReadResult Finish(ReadStatus status, string marker)
         {
+            finishing = true;
+            searching = false;
             pos = buf.Length;
             Render();
             ed.term.Write(marker + "\r\n");
             return new ReadResult(status, status == ReadStatus.Line ? buf.ToString() : "");
         }
+
+        // --- Ctrl+R --------------------------------------------------------------------------
+
+        void StartSearch()
+        {
+            searching = true;
+            searchFailed = false;
+            query.Clear();
+            searchIndex = ed.history.Count;
+            savedBuf = buf.ToString();
+            savedPos = pos;
+        }
+
+        /// <returns>Handled = key consumed by search; Result = key ended the read.</returns>
+        (bool Handled, ReadResult? Result) SearchKey(Key key)
+        {
+            switch (key.Kind)
+            {
+                case KeyKind.Text:
+                    query.Append(key.Text);
+                    Search(Math.Min(searchIndex, ed.history.Count - 1));
+                    return (true, null);
+                case KeyKind.Backspace:
+                    if (query.Length > 0) query.Length--;
+                    Search(ed.history.Count - 1);
+                    return (true, null);
+                case KeyKind.Ctrl when key.Ctrl == 'r':
+                    Search(searchIndex - 1);
+                    return (true, null);
+                case KeyKind.Ctrl when key.Ctrl == 'g':
+                case KeyKind.Escape:
+                    searching = false;
+                    buf.Clear().Append(savedBuf);
+                    pos = savedPos;
+                    return (true, null);
+                case KeyKind.Enter:
+                    return (true, Finish(ReadStatus.Line, ""));
+                default:
+                    searching = false;
+                    return (false, null);
+            }
+        }
+
+        void Search(int from)
+        {
+            var q = query.ToString();
+            for (int i = Math.Min(from, ed.history.Count - 1); i >= 0; i--)
+            {
+                int at = ed.history[i].IndexOf(q, StringComparison.OrdinalIgnoreCase);
+                if (at < 0) continue;
+                searchIndex = i;
+                searchFailed = false;
+                buf.Clear().Append(ed.history[i]);
+                pos = at;
+                return;
+            }
+            searchFailed = q.Length > 0;
+        }
+
+        // --- inline suggestion from history ------------------------------------------------------
+
+        string Suggestion()
+        {
+            if (!IsCommand || finishing || searching || completion is not null || buf.Length == 0 || pos != buf.Length) return "";
+            var text = buf.ToString();
+            for (int i = ed.history.Count - 1; i >= 0; i--)
+            {
+                var h = ed.history[i];
+                if (h.Length > text.Length && h.StartsWith(text, StringComparison.OrdinalIgnoreCase)) return h[text.Length..];
+            }
+            return "";
+        }
+
+        bool AcceptSuggestion(bool wholeLine)
+        {
+            var s = Suggestion();
+            if (s.Length == 0) return false;
+            if (!wholeLine)
+            {
+                // Next word: leading spaces plus one run of non-spaces.
+                int i = 0;
+                while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+                while (i < s.Length && !char.IsWhiteSpace(s[i])) i++;
+                s = s[..i];
+            }
+            buf.Append(s);
+            pos = buf.Length;
+            return true;
+        }
+
+        // --- editing -----------------------------------------------------------------------------
 
         void Insert(string text)
         {
@@ -229,7 +344,7 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
             int perRow = Math.Max(1, ed.term.Columns / colWidth);
             var sb = new StringBuilder();
             MoveToEnd(sb);
-            sb.Append("\r\n\x1b[2m");
+            sb.Append("\r\n").Append(Dim);
             for (int i = 0; i < items.Count; i++)
             {
                 var item = items[i].Length > colWidth - 2 ? items[i][..(colWidth - 3)] + "…" : items[i];
@@ -237,35 +352,53 @@ public sealed class LineEditor(ITerminal term, KeyQueue input)
                 if ((i + 1) % perRow == 0 && i + 1 < items.Count) sb.Append("\r\n");
             }
             if (c.CompletionMatches.Count > max) sb.Append($"\r\n… {c.CompletionMatches.Count - max} more");
-            sb.Append("\x1b[0m\r\n");
+            sb.Append(Reset).Append("\r\n");
             ed.term.Write(sb.ToString());
             renderedRow = 0;
         }
 
-        string Display(int upTo) => mode == EditMode.Secret
+        // --- rendering ---------------------------------------------------------------------------
+
+        (string Text, int Width) Prompt()
+        {
+            if (!searching) return (promptLine, promptWidth);
+            var p = $"{(searchFailed ? "(failed reverse-i-search)" : "(reverse-i-search)")}`{query}': ";
+            return (p, CellWidth.Of(p));
+        }
+
+        string Plain(int upTo) => mode == EditMode.Secret
             ? new string('*', new StringInfo(buf.ToString(0, upTo)).LengthInTextElements)
             : buf.ToString(0, upTo);
+
+        string Styled()
+        {
+            var text = Plain(buf.Length);
+            return IsCommand && !searching ? Highlighter.Colorize(text) : text;
+        }
 
         void MoveToEnd(StringBuilder sb)
         {
             int cols = Math.Max(1, ed.term.Columns);
-            int endRow = (promptWidth + CellWidth.Of(Display(buf.Length))) / cols;
+            int endRow = (Prompt().Width + CellWidth.Of(Plain(buf.Length)) + CellWidth.Of(Suggestion())) / cols;
             if (endRow > renderedRow) sb.Append($"\x1b[{endRow - renderedRow}B");
         }
 
         void Render()
         {
             int cols = Math.Max(1, ed.term.Columns);
-            var all = Display(buf.Length);
+            var (prompt, promptW) = Prompt();
+            var suggestion = Suggestion();
             var sb = new StringBuilder();
             if (renderedRow > 0) sb.Append($"\x1b[{renderedRow}A");
-            sb.Append('\r').Append(promptLine).Append(all).Append("\x1b[J");
+            sb.Append('\r').Append(prompt).Append(Styled());
+            if (suggestion.Length > 0) sb.Append(Dim).Append(suggestion).Append(Reset);
+            sb.Append("\x1b[J");
 
-            int endWidth = promptWidth + CellWidth.Of(all);
+            int endWidth = promptW + CellWidth.Of(Plain(buf.Length)) + CellWidth.Of(suggestion);
             // Terminals defer the wrap at the last column; force it so row math stays exact.
             if (endWidth > 0 && endWidth % cols == 0) sb.Append("\r\n");
             int endRow = endWidth / cols;
-            int cursorWidth = promptWidth + CellWidth.Of(Display(pos));
+            int cursorWidth = promptW + CellWidth.Of(Plain(pos));
             int row = cursorWidth / cols, col = cursorWidth % cols;
             if (endRow > row) sb.Append($"\x1b[{endRow - row}A");
             sb.Append($"\x1b[{col + 1}G");

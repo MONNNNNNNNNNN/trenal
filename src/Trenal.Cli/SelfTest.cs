@@ -51,6 +51,17 @@ static class SelfTest
             return false;
         }
 
+        bool WaitForRaw(string needle, int timeoutMs = 30_000)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (term.Text[mark..].Contains(needle, StringComparison.Ordinal)) return true;
+                Thread.Sleep(20);
+            }
+            return false;
+        }
+
         void Send(string keys)
         {
             mark = term.Text.Length;
@@ -142,8 +153,177 @@ static class SelfTest
             return WaitFor("file-ok") && WaitFor(Prompt);
         });
         Check("ConvertTo-Json", () => { Send("@{k='json-ok'} | ConvertTo-Json -Compress\r"); return WaitFor("{\"k\":\"json-ok\"}"); });
+        Check("syntax highlighting", () =>
+        {
+            Send("Write-Output 'hl-x'");
+            if (!WaitForRaw("\x1b[93mWrite-Output") || !WaitForRaw("\x1b[36m'hl-x'")) return false;
+            Send("\x03");
+            return WaitFor(Prompt);
+        });
+        Check("inline suggestion from history", () =>
+        {
+            Send("'sugg-' + 'one'\r");
+            if (!WaitFor("sugg-one") || !WaitFor(Prompt)) return false;
+            Send("'sugg");
+            if (!WaitFor("-' + 'one'")) return false;
+            Send("\x1b[C\r"); // Right accepts, Enter runs
+            return WaitFor("sugg-one") && WaitFor(Prompt);
+        });
+        Check("Ctrl+R reverse search", () =>
+        {
+            Send("\x12");
+            if (!WaitFor("(reverse-i-search)")) return false;
+            Send("sugg-");
+            if (!WaitFor("'sugg-' + 'one'")) return false;
+            Send("\r");
+            return WaitFor("sugg-one") && WaitFor(Prompt);
+        });
+        Check("secrets stay out of the history file", () =>
+        {
+            Send("$apiToken = 'zz' + 'secret-value'; 'after-' + 'secret'\r");
+            if (!WaitFor("after-secret") || !WaitFor(Prompt)) return false;
+            var file = options.HistoryFile!;
+            return File.Exists(file) && !File.ReadAllText(file).Contains("secret-value") && File.ReadAllText(file).Contains("'sugg-' + 'one'");
+        });
+        Check("Mount-Folder / Dismount-Folder", () =>
+        {
+            Send("$null = mkdir ~/proj; Set-Content ~/proj/m.txt ('mount-' + 'ok'); Mount-Folder work ~/proj | Out-Null; cat work:/m.txt; (Get-MountedFolder).Name\r");
+            if (!WaitFor("mount-ok") || !WaitFor("work:") || !WaitFor(Prompt)) return false;
+            Send("Dismount-Folder work; Test-Path work:/; @(Get-MountedFolder).Count\r");
+            return WaitFor("False") && WaitFor("0") && WaitFor(Prompt);
+        });
+        Check("unix shims: grep/head/tail/wc/which", () =>
+        {
+            Send("'alpha','beta','gamma' | grep -n et; (1..50 | head -n 5 | tail -1) * 20; 'x','y' | wc -l; which curl\r");
+            return WaitFor("2:beta") && WaitFor("100") && WaitFor("curl: function") && WaitFor(Prompt);
+        });
+        Check("unix aliases: ls/cat/rm", () =>
+        {
+            Send("touch ~/a.txt; Set-Content ~/a.txt ('cat-' + 'ok'); cat ~/a.txt; (ls ~/a.txt).Name; rm ~/a.txt; Test-Path ~/a.txt\r");
+            return WaitFor("cat-ok") && WaitFor("a.txt") && WaitFor("False") && WaitFor(Prompt);
+        });
         if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_NET") == "1")
+        {
             Check("Invoke-RestMethod", () => { Send("(Invoke-RestMethod https://api.nuget.org/v3/index.json).version\r"); return WaitFor("3.0.0"); });
+            Check("curl shim", () => { Send("(curl -sSL https://api.nuget.org/v3/index.json | ConvertFrom-Json).resources.Count -gt 0\r"); return WaitFor("True"); });
+        }
+        Check("git: init/add/commit/push/clone/pull", () =>
+        {
+            Send("git config --global user.name 'Self Test'; git config --global user.email st@example.com; " +
+                 "cd ~; git init --bare remote.git | Out-Null; git init w | Out-Null; cd w; Set-Content a.txt 'v1'; " +
+                 "git add .; git commit -m ('git-' + 'first'); git remote add origin ~/remote.git; git push -u origin (git rev-parse --abbrev-ref HEAD) | Out-Null; " +
+                 "cd ~; git clone ~/remote.git c | Out-Null; cd w; Add-Content a.txt 'v2'; git commit -a -m ('git-' + 'second') | Out-Null; git push | Out-Null; " +
+                 "cd ~/c; git pull | Out-Null; git log --oneline | Select-Object -First 1; git status -s; cd ~\r");
+            return WaitFor("] git-first") && WaitFor(" git-second") && WaitFor(Prompt);
+        });
+        Check("git: diverged pull makes a merge commit", () =>
+        {
+            Send("cd ~/w; Set-Content b.txt 'w'; git add b.txt; git commit -m w-side | Out-Null; git push | Out-Null; " +
+                 "cd ~/c; Set-Content d.txt 'c'; git add d.txt; git commit -m c-side | Out-Null; git pull; " +
+                 "(Get-ChildItem -Name | Sort-Object) -join ','; cd ~\r");
+            return WaitFor("Merge made: ") && WaitFor("a.txt,b.txt,d.txt") && WaitFor(Prompt);
+        });
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_NET") == "1")
+            Check("git clone over HTTPS", () =>
+            {
+                Send("git clone --depth 1 https://github.com/octocat/Hello-World.git ~/hw | Out-Null; (Get-Content ~/hw/README) -join ''\r");
+                return WaitFor("Hello World!", 120_000) && WaitFor(Prompt);
+            });
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_SSH") == "1")
+        {
+            string? sshdDir = null;
+            Check("ssh-keygen", () =>
+            {
+                Send("ssh-keygen -f ~/.ssh/id_ed25519 -N '' -C selftest | Out-Null; (cat ~/.ssh/id_ed25519.pub) -match '^ssh-ed25519 '\r");
+                return WaitFor("True") && WaitFor(Prompt);
+            });
+            Check("sshd (test fixture) starts", () =>
+            {
+                var home = options.Environment["HOME"]!;
+                var script = Path.Combine(AppContext.BaseDirectory, "start-sshd.sh");
+                var p = Process.Start(new ProcessStartInfo("bash", [script, Path.Combine(home, ".ssh", "id_ed25519.pub"), "2222"])
+                    { RedirectStandardOutput = true, UseShellExecute = false })!;
+                sshdDir = p.StandardOutput.ReadToEnd().Trim();
+                p.WaitForExit();
+                return p.ExitCode == 0 && File.Exists(Path.Combine(sshdDir, "sshd.pid"));
+            });
+            Check("ssh remote command + known_hosts prompt", () =>
+            {
+                Send("ssh -p 2222 \"$(whoami)@127.0.0.1\" echo remote-'$((40+2))'\r");
+                if (!WaitFor("Are you sure you want to continue connecting")) return false;
+                Send("yes\r");
+                return WaitFor("remote-42") && WaitFor(Prompt);
+            });
+            Check("ssh interactive shell (raw passthrough)", () =>
+            {
+                Send("ssh -p 2222 \"$(whoami)@127.0.0.1\"\r");
+                Thread.Sleep(1500);
+                Send("echo inner-$((6*7))\r");
+                if (!WaitFor("inner-42")) return false;
+                Send("exit\r");
+                return WaitFor("Connection to 127.0.0.1 closed.") && WaitFor(Prompt);
+            });
+            Check("scp upload + download", () =>
+            {
+                Send("Set-Content ~/up.txt ('scp-' + 'roundtrip'); scp -P 2222 ~/up.txt \"$(whoami)@127.0.0.1:/tmp/trenal-scp.txt\"; scp -P 2222 \"$(whoami)@127.0.0.1:/tmp/trenal-scp.txt\" ~/down.txt; cat ~/down.txt\r");
+                return WaitFor("scp-roundtrip") && WaitFor(Prompt);
+            });
+            if (sshdDir is not null && File.Exists(Path.Combine(sshdDir, "sshd.pid")))
+            {
+                var pid = File.ReadAllText(Path.Combine(sshdDir, "sshd.pid")).Trim();
+                Process.Start(new ProcessStartInfo("bash", ["-c", $"kill {pid} 2>/dev/null || sudo kill {pid}"]))?.WaitForExit();
+            }
+        }
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_WASM") == "1")
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "wasm").Replace("'", "''");
+            Check("wasm: hello to the terminal", () =>
+            {
+                Send($"$w = '{dir}'; Invoke-Wasm $w/hello.wasm\r");
+                return WaitFor("hello from wasm") && WaitFor(Prompt);
+            });
+            Check("wasm: output captured when assigned", () =>
+            {
+                Send("$o = Invoke-Wasm $w/hello.wasm; $o.ToUpper()\r");
+                return WaitFor("HELLO FROM WASM") && WaitFor(Prompt);
+            });
+            Check("wasm: pipeline in and out", () =>
+            {
+                Send("'pipe-a','pipe-b' | Invoke-Wasm $w/cat.wasm | ForEach-Object { \"<$_>\" }\r");
+                return WaitFor("<pipe-a>") && WaitFor("<pipe-b>") && WaitFor(Prompt);
+            });
+            Check("wasm: exit code", () =>
+            {
+                Send("Invoke-Wasm $w/exit3.wasm; \"code=$LASTEXITCODE\"\r");
+                return WaitFor("code=3") && WaitFor(Prompt);
+            });
+            Check("wasm: writes into the current directory", () =>
+            {
+                Send("cd ~; Invoke-Wasm $w/writefile.wasm; Get-Content ~/wasm-out.txt\r");
+                return WaitFor("written by wasm") && WaitFor(Prompt);
+            });
+            Check("wasm: keyboard stdin, Ctrl+D", () =>
+            {
+                Send("Invoke-Wasm $w/cat.wasm\r");
+                Thread.Sleep(500);
+                Send("typed-in\r");
+                if (!WaitFor("typed-in", count: 2)) return false;
+                Send("\x04");
+                return WaitFor(Prompt);
+            });
+            Check("wasm: Ctrl+C stops a busy program", () =>
+            {
+                Send("Invoke-Wasm $w/spin.wasm; \"spin=$LASTEXITCODE\"\r");
+                Thread.Sleep(1000);
+                Send("\x03");
+                return WaitFor("spin=130", 10_000) && WaitFor(Prompt);
+            });
+            Check("wasm: tools in ~/.local/bin become commands", () =>
+            {
+                Send("$null = New-Item -ItemType Directory -Force ~/.local/bin; Copy-Item $w/hello.wasm ~/.local/bin/; Register-WasmCommand; (hello) -replace 'wasm','tool'\r");
+                return WaitFor("hello from tool") && WaitFor(Prompt);
+            });
+        }
         Check("exit code", () =>
         {
             Send("exit 3\r");

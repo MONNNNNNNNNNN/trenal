@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Language;
 using System.Management.Automation.Runspaces;
+using System.Text.RegularExpressions;
 
 namespace Trenal.Core;
 
@@ -16,6 +17,12 @@ public sealed class ShellOptions
 
     /// <summary>On `exit`, start a fresh session instead of ending (an app has nowhere to exit to).</summary>
     public bool RestartOnExit { get; init; }
+
+    /// <summary>Folder picker/bookmarks for Mount-Folder. Defaults to plain paths in ~/.local/share/trenal/mounts.json.</summary>
+    public IFolderAccess? Folders { get; init; }
+
+    /// <summary>Git credentials etc. Defaults to a 0600 file in ~/.local/share/trenal.</summary>
+    public ISecretStore? Secrets { get; init; }
 }
 
 /// <summary>
@@ -31,6 +38,7 @@ public sealed class Shell
     readonly object state = new();
     PowerShell? running;
     bool hostReading;
+    Action<string>? rawSink;
     Runspace? runspace;
     TrenalHost? host;
 
@@ -57,6 +65,13 @@ public sealed class Shell
     /// <summary>Raw input from the terminal (UI thread).</summary>
     public void Input(string data)
     {
+        Action<string>? sink;
+        lock (state) sink = rawSink;
+        if (sink is not null)
+        {
+            sink(data);
+            return;
+        }
         List<Key> parsed;
         lock (parser) parsed = parser.Feed(data);
         var batch = new List<Key>(parsed.Count);
@@ -76,6 +91,24 @@ public sealed class Shell
             try { running.BeginStop(null, null); } catch (ObjectDisposedException) { }
             if (hostReading) keys.Add([new Key(KeyKind.Interrupt)]);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Routes terminal input straight to <paramref name="sink"/> (no line editing, Ctrl+C
+    /// included) until disposed. Used by commands that own the terminal, like interactive ssh.
+    /// </summary>
+    public IDisposable BeginRawInput(Action<string> sink)
+    {
+        lock (state) rawSink = sink;
+        return new RawScope(this);
+    }
+
+    sealed class RawScope(Shell shell) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (shell.state) shell.rawSink = null;
         }
     }
 
@@ -133,18 +166,39 @@ public sealed class Shell
         Exited?.Invoke(code);
     }
 
-    int RunSession()
+    Runspace OpenRunspace()
     {
         // Offline by default: System.Management.Automation otherwise reports module loads to
         // Application Insights. Must be set before the telemetry type initialises.
         Environment.SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1");
         foreach (var (k, v) in options.Environment) Environment.SetEnvironmentVariable(k, v);
 
-        host = new TrenalHost(this);
-        using var rs = RunspaceFactory.CreateRunspace(host, InitialSessionState.CreateDefault2());
+        var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "trenal");
+        var folders = options.Folders ?? new JsonFolderAccess(Path.Combine(data, "mounts.json"));
+        var secrets = options.Secrets ?? new FileSecretStore(Path.Combine(data, "secrets.json"));
+        host = new TrenalHost(this, new HostServices(folders, secrets, this));
+        var iss = InitialSessionState.CreateDefault2();
+        foreach (var (name, type) in TrenalCmdlets) iss.Commands.Add(new SessionStateCmdletEntry(name, type, null));
+        var rs = RunspaceFactory.CreateRunspace(host, iss);
         rs.ThreadOptions = PSThreadOptions.UseCurrentThread;
         rs.Open();
         runspace = rs;
+        RestoreMounts(folders);
+        return rs;
+    }
+
+    /// <summary>Runs one script in a fresh trenal session on the calling thread (no prompt, no editor).</summary>
+    public int RunScript(string script)
+    {
+        using var rs = OpenRunspace();
+        Execute(StartupScript(), addToHistory: false);
+        Execute(script, addToHistory: false);
+        return host!.ShouldExit ? host.ExitCode : (rs.SessionStateProxy.GetVariable("LASTEXITCODE") as int? ?? 0);
+    }
+
+    int RunSession()
+    {
+        using var rs = OpenRunspace();
         editor.Completer = (text, cursor) =>
         {
             using var ps = PowerShell.Create();
@@ -157,7 +211,7 @@ public sealed class Shell
         Terminal.SetTitle("PowerShell");
         Execute(StartupScript(), addToHistory: false);
 
-        while (!host.ShouldExit)
+        while (!host!.ShouldExit)
         {
             var r = editor.ReadLine(Prompt(), EditMode.Command);
             if (r.Status == ReadStatus.Eof) break;
@@ -181,6 +235,34 @@ public sealed class Shell
             Execute(text, addToHistory: true);
         }
         return host.ExitCode;
+    }
+
+    static readonly (string, Type)[] TrenalCmdlets =
+    [
+        ("Mount-Folder", typeof(MountFolderCommand)),
+        ("Dismount-Folder", typeof(DismountFolderCommand)),
+        ("Get-MountedFolder", typeof(GetMountedFolderCommand)),
+        ("Enter-SshSession", typeof(EnterSshSessionCommand)),
+        ("Copy-SshItem", typeof(CopySshItemCommand)),
+        ("New-SshKey", typeof(NewSshKeyCommand)),
+        ("Invoke-Git", typeof(InvokeGitCommand)),
+        ("Invoke-Wasm", typeof(InvokeWasmCommand)),
+    ];
+
+    void RestoreMounts(IFolderAccess folders)
+    {
+        foreach (var (name, root) in folders.Restore())
+        {
+            if (!Directory.Exists(root)) continue;
+            try
+            {
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+                ps.AddCommand("New-PSDrive").AddParameter("Name", name).AddParameter("PSProvider", "FileSystem")
+                    .AddParameter("Root", root).AddParameter("Scope", "Global").Invoke();
+            }
+            catch (RuntimeException) { }
+        }
     }
 
     void Execute(string script, bool addToHistory)
@@ -255,9 +337,13 @@ public sealed class Shell
         foreach (var line in File.ReadLines(options.HistoryFile).TakeLast(2000)) editor.AddHistory(line);
     }
 
+    // Same heuristic as PSReadLine: likely secrets stay in memory history but never reach the
+    // history file, which lives in Documents (visible in the Files app, included in backups).
+    static readonly Regex Sensitive = new("password|asplaintext|token|apikey|secret", RegexOptions.IgnoreCase);
+
     void AppendHistory(string line)
     {
-        if (options.HistoryFile is null) return;
+        if (options.HistoryFile is null || Sensitive.IsMatch(line)) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(options.HistoryFile)!);

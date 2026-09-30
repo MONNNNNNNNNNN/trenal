@@ -22,14 +22,20 @@ public sealed class AppDelegate : UIApplicationDelegate
         new("Default Configuration", connectingSceneSession.Role);
 
     /// <summary>
-    /// PowerShell P/Invokes "libpsl-native". On iOS it lives in the app's Frameworks folder as
-    /// libpsl-native.framework (native/build-psl-native-ios.sh); point every lookup there.
+    /// Native libraries ship as Frameworks/&lt;name&gt;.framework/&lt;name&gt; (native/*.sh):
+    /// libpsl-native for PowerShell, git2-&lt;sha&gt; for LibGit2Sharp. Point every P/Invoke
+    /// of such a name at its framework binary.
     /// </summary>
     static void RegisterPslNative()
     {
-        var path = Path.Combine(NSBundle.MainBundle.PrivateFrameworksPath!, "libpsl-native.framework", "libpsl-native");
-        IntPtr Resolve(string name) => name is "libpsl-native" or "psl-native" ? NativeLibrary.Load(path) : IntPtr.Zero;
+        var frameworks = NSBundle.MainBundle.PrivateFrameworksPath!;
+        IntPtr Resolve(string name)
+        {
+            var path = Path.Combine(frameworks, name + ".framework", name);
+            return File.Exists(path) ? NativeLibrary.Load(path) : IntPtr.Zero;
+        }
 
+        // SMA has no resolver of its own; LibGit2Sharp does, and falls back to the ALC event.
         NativeLibrary.SetDllImportResolver(typeof(PSObject).Assembly, (name, _, _) => Resolve(name));
         AssemblyLoadContext.Default.ResolvingUnmanagedDll += (_, name) => Resolve(name);
     }

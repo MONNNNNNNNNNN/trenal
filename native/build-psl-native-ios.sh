@@ -4,52 +4,38 @@
 # so without it PowerShell dies with DllNotFoundException. Runs on macOS with Xcode.
 set -euo pipefail
 
-REF="${PSL_NATIVE_REF:-master}"
+# Pinned so a change upstream can't silently alter the build; bump deliberately.
+REF="${PSL_NATIVE_REF:-0e619cee3591727a7beb1554b8e300fb790395d2}"
 MIN_IOS="${MIN_IOS:-16.0}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-WORK="$ROOT/.build"
-OUT="$ROOT/out/libpsl-native.framework"
+WORK="$ROOT/.build/psl-native"
 
-rm -rf "$WORK" "$OUT"
-mkdir -p "$WORK" "$OUT"
-git clone --quiet --depth 1 --branch "$REF" https://github.com/PowerShell/PowerShell-native.git "$WORK/src"
+rm -rf "$WORK"
+mkdir -p "$WORK/src"
+git -C "$WORK/src" init --quiet
+git -C "$WORK/src" fetch --quiet --depth 1 https://github.com/PowerShell/PowerShell-native.git "$REF"
+git -C "$WORK/src" checkout --quiet FETCH_HEAD
 SRC="$WORK/src/src/libpsl-native"
 
+# patch <file> <sed-expr> <text that must be present afterwards>
+patch_src() {
+  sed -i '' "$2" "$1"
+  grep -qF -- "$3" "$1" || { echo "patch did not apply to $1: $2" >&2; exit 1; }
+}
 # Upstream builds with -Werror; newer iOS SDKs deprecate a few POSIX calls it uses (fork, syscall).
-sed -i '' 's/ -Werror//' "$SRC/CMakeLists.txt"
+patch_src "$SRC/CMakeLists.txt" 's/ -Werror//' '-fstack-protector-strong'
+if grep -q -- '-Werror' "$SRC/CMakeLists.txt"; then echo "-Werror still set" >&2; exit 1; fi
 # The iOS SDK has no <sys/user.h>. On Apple, getppid.cpp only needs kinfo_proc, which is in <sys/sysctl.h>.
-sed -i '' 's|#include <sys/user.h>|#include <sys/sysctl.h>|' "$SRC/src/getppid.cpp"
+patch_src "$SRC/src/getppid.cpp" 's|#include <sys/user.h>|#include <sys/sysctl.h>|' '#include <sys/sysctl.h>'
 
 cmake -S "$SRC" -B "$WORK/build" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-install_name,@rpath/libpsl-native.framework/libpsl-native"
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build "$WORK/build" --config Release -j "$(sysctl -n hw.ncpu)"
 
-DYLIB="$(find "$SRC/.." "$WORK/build" -name 'libpsl-native.dylib' -print -quit)"
+DYLIB="$(find "$WORK" -name 'libpsl-native.dylib' -type f -print -quit)"
 [ -n "$DYLIB" ] || { echo "libpsl-native.dylib not found" >&2; exit 1; }
-cp "$DYLIB" "$OUT/libpsl-native"
-install_name_tool -id @rpath/libpsl-native.framework/libpsl-native "$OUT/libpsl-native"
-
-cat > "$OUT/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key><string>libpsl-native</string>
-  <key>CFBundleIdentifier</key><string>com.microsoft.powershell.psl-native</string>
-  <key>CFBundleName</key><string>libpsl-native</string>
-  <key>CFBundlePackageType</key><string>FMWK</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
-  <key>MinimumOSVersion</key><string>$MIN_IOS</string>
-</dict>
-</plist>
-PLIST
-
-file "$OUT/libpsl-native"
-echo "built $OUT"
+"$ROOT/make-framework.sh" "$DYLIB" libpsl-native "$MIN_IOS"

@@ -7,10 +7,14 @@ using System.Text;
 
 namespace Trenal.Core;
 
-sealed class TrenalHost(Shell shell) : PSHost
+sealed class TrenalHost(Shell shell, HostServices services) : PSHost
 {
     readonly Guid id = Guid.NewGuid();
     readonly HostUI ui = new(shell);
+    readonly PSObject privateData = new(services);
+
+    // trenal cmdlets find their services here ($Host.PrivateData).
+    public override PSObject PrivateData => privateData;
 
     public override string Name => "trenal";
     public override Version Version => typeof(TrenalHost).Assembly.GetName().Version ?? new Version(0, 1);

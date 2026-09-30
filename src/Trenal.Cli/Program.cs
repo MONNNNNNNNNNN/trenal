@@ -20,18 +20,23 @@ var options = new ShellOptions
     HistoryFile = Path.Combine(home, ".local", "share", "trenal", "history.txt"),
 };
 
+int cmd = Array.IndexOf(args, "--command");
+if (cmd >= 0 && cmd + 1 < args.Length) return Command(options, args[cmd + 1]);
 return selftest ? SelfTest.Run(options) : Interactive(options);
 
-// A self-contained RID-specific publish leaves the built-in modules under runtimes/; point at them.
+// Non-interactive: run one script in a full trenal session (modules, cmdlets, startup). For development.
+static int Command(ShellOptions options, string script) => new Shell(new ConsoleTerminal(), options).RunScript(script);
+
+// trenal's modules sit in <output>/Modules; PowerShell's built-in ones in runtimes/unix/lib/<tfm>/Modules
+// for a RID-specific self-contained publish, or <output>/Modules otherwise.
 static string BuiltInModules()
 {
     var baseDir = AppContext.BaseDirectory;
-    var direct = Path.Combine(baseDir, "Modules");
-    if (Directory.Exists(direct)) return direct;
+    var dirs = new List<string> { Path.Combine(baseDir, "Modules") };
     var runtimes = Path.Combine(baseDir, "runtimes", "unix", "lib");
-    return Directory.Exists(runtimes)
-        ? Directory.GetDirectories(runtimes).Select(d => Path.Combine(d, "Modules")).FirstOrDefault(Directory.Exists) ?? ""
-        : "";
+    if (Directory.Exists(runtimes))
+        dirs.AddRange(Directory.GetDirectories(runtimes).Select(d => Path.Combine(d, "Modules")));
+    return string.Join(Path.PathSeparator, dirs.Where(Directory.Exists));
 }
 
 static int Interactive(ShellOptions options)

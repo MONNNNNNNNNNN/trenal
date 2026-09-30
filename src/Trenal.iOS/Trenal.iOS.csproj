@@ -23,8 +23,19 @@
 
   <ItemGroup>
     <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />
-    <!-- Built by native/build-psl-native-ios.sh -->
+    <!-- LibGit2Sharp's desktop libgit2 builds (Linux .so, macOS .dylib) must not land in the app;
+         iOS gets its own framework from native/build-libgit2-ios.sh. -->
+    <PackageReference Include="LibGit2Sharp.NativeBinaries" Version="[2.0.324]" ExcludeAssets="all" />
+    <!-- Built by native/build-psl-native-ios.sh, native/build-libgit2-ios.sh and native/build-wasm.sh ios -->
     <NativeReference Include="../../native/out/libpsl-native.framework">
+      <Kind>Framework</Kind>
+      <SmartLink>false</SmartLink>
+    </NativeReference>
+    <NativeReference Include="../../native/out/git2-5853918.framework">
+      <Kind>Framework</Kind>
+      <SmartLink>false</SmartLink>
+    </NativeReference>
+    <NativeReference Include="../../native/out/trenal-wasm.framework">
       <Kind>Framework</Kind>
       <SmartLink>false</SmartLink>
     </NativeReference>
@@ -42,6 +53,11 @@
   <ItemGroup>
     <BundleResource Include="$(NuGetPackageRoot)microsoft.powershell.sdk/$(PowerShellSdkVersion)/contentFiles/any/any/runtimes/unix/lib/net10.0/Modules/**/*"
                     LogicalName="Modules/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- trenal's own modules (Trenal.Tools: unix command shims). -->
+  <ItemGroup>
+    <BundleResource Include="../Trenal.Core/Modules/**/*" LogicalName="Modules/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- Terminal UI: xterm.js rendered in a WKWebView from files inside the app. Nothing is fetched at runtime. -->

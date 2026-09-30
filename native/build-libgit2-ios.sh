@@ -18,18 +18,21 @@ git -C "$WORK/src" init --quiet
 git -C "$WORK/src" fetch --quiet --depth 1 https://github.com/libgit2/libgit2.git "$SHA"
 git -C "$WORK/src" checkout --quiet FETCH_HEAD
 
-# CMake's find_library doesn't see SDK frameworks when cross-compiling for iOS; hand libgit2's
-# SecureTransport checks the paths (and the SSLCreateContext result) directly.
+# libgit2 only runs find_package(Security/CoreFoundation) when CMAKE_SYSTEM_NAME is "Darwin"
+# (cmake/SelectHTTPSBackend.cmake); for "iOS" it never looks. Hand it the results those find
+# modules would set. Both frameworks are in every iOS SDK, and clang finds their headers
+# through the sysroot.
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 FW="$SDK/System/Library/Frameworks"
 
 cmake -S "$WORK/src" -B "$WORK/build" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_SYSROOT="$SDK" \
-  -DCOREFOUNDATION_INCLUDE_DIR="$FW/CoreFoundation.framework/Headers" \
-  -DCOREFOUNDATION_LIBRARIES="$FW/CoreFoundation.framework" \
+  -DCOREFOUNDATION_FOUND=TRUE \
+  -DCOREFOUNDATION_LDFLAGS="-framework CoreFoundation" \
+  -DSECURITY_FOUND=TRUE \
   -DSECURITY_INCLUDE_DIR="$FW" \
-  -DSECURITY_LIBRARIES="$FW/Security.framework" \
+  -DSECURITY_LDFLAGS="-framework Security" \
   -DSECURITY_HAS_SSLCREATECONTEXT=1 \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \

@@ -28,6 +28,7 @@ if [ "$TARGET" = ios ]; then
     -DCMAKE_BUILD_TYPE=Release
   cmake --build "$WORK" --config Release -j "$(sysctl -n hw.ncpu)"
   DYLIB="$(find "$WORK" -name 'libtrenal-wasm.dylib' -type f -print -quit)"
+  [ -n "$DYLIB" ] || { echo "libtrenal-wasm.dylib not found" >&2; find "$WORK" -name '*.dylib' >&2; exit 1; }
   "$ROOT/make-framework.sh" "$DYLIB" trenal-wasm "$MIN_IOS"
 else
   cmake -S "$ROOT/trenal-wasm" -B "$WORK" -DWAMR_ROOT_DIR="$ROOT/.build/wamr" -DCMAKE_BUILD_TYPE=Release

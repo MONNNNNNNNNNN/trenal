@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Language;
 using System.Management.Automation.Runspaces;
+using System.Text.RegularExpressions;
 
 namespace Trenal.Core;
 
@@ -255,9 +256,13 @@ public sealed class Shell
         foreach (var line in File.ReadLines(options.HistoryFile).TakeLast(2000)) editor.AddHistory(line);
     }
 
+    // Same heuristic as PSReadLine: likely secrets stay in memory history but never reach the
+    // history file, which lives in Documents (visible in the Files app, included in backups).
+    static readonly Regex Sensitive = new("password|asplaintext|token|apikey|secret", RegexOptions.IgnoreCase);
+
     void AppendHistory(string line)
     {
-        if (options.HistoryFile is null) return;
+        if (options.HistoryFile is null || Sensitive.IsMatch(line)) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(options.HistoryFile)!);

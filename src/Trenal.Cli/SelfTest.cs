@@ -51,6 +51,17 @@ static class SelfTest
             return false;
         }
 
+        bool WaitForRaw(string needle, int timeoutMs = 30_000)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (term.Text[mark..].Contains(needle, StringComparison.Ordinal)) return true;
+                Thread.Sleep(20);
+            }
+            return false;
+        }
+
         void Send(string keys)
         {
             mark = term.Text.Length;
@@ -142,6 +153,38 @@ static class SelfTest
             return WaitFor("file-ok") && WaitFor(Prompt);
         });
         Check("ConvertTo-Json", () => { Send("@{k='json-ok'} | ConvertTo-Json -Compress\r"); return WaitFor("{\"k\":\"json-ok\"}"); });
+        Check("syntax highlighting", () =>
+        {
+            Send("Write-Output 'hl-x'");
+            if (!WaitForRaw("\x1b[93mWrite-Output") || !WaitForRaw("\x1b[36m'hl-x'")) return false;
+            Send("\x03");
+            return WaitFor(Prompt);
+        });
+        Check("inline suggestion from history", () =>
+        {
+            Send("'sugg-' + 'one'\r");
+            if (!WaitFor("sugg-one") || !WaitFor(Prompt)) return false;
+            Send("'sugg");
+            if (!WaitFor("-' + 'one'")) return false;
+            Send("\x1b[C\r"); // Right accepts, Enter runs
+            return WaitFor("sugg-one") && WaitFor(Prompt);
+        });
+        Check("Ctrl+R reverse search", () =>
+        {
+            Send("\x12");
+            if (!WaitFor("(reverse-i-search)")) return false;
+            Send("sugg-");
+            if (!WaitFor("'sugg-' + 'one'")) return false;
+            Send("\r");
+            return WaitFor("sugg-one") && WaitFor(Prompt);
+        });
+        Check("secrets stay out of the history file", () =>
+        {
+            Send("$apiToken = 'zz' + 'secret-value'; 'after-' + 'secret'\r");
+            if (!WaitFor("after-secret") || !WaitFor(Prompt)) return false;
+            var file = options.HistoryFile!;
+            return File.Exists(file) && !File.ReadAllText(file).Contains("secret-value") && File.ReadAllText(file).Contains("'sugg-' + 'one'");
+        });
         Check("unix shims: grep/head/tail/wc/which", () =>
         {
             Send("'alpha','beta','gamma' | grep -n et; (1..50 | head -n 5 | tail -1) * 20; 'x','y' | wc -l; which curl\r");

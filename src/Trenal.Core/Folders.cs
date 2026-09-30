@@ -71,9 +71,11 @@ public class JsonFolderAccess(string file) : IFolderAccess
 }
 
 /// <summary>What trenal's cmdlets reach through <c>$Host.PrivateData</c>.</summary>
-public sealed class HostServices(IFolderAccess folders, Shell? shell)
+public sealed class HostServices(IFolderAccess folders, ISecretStore secrets, Shell? shell)
 {
     public IFolderAccess Folders { get; } = folders;
+
+    public ISecretStore Secrets { get; } = secrets;
 
     /// <summary>The interactive shell, for commands that take over the terminal (ssh).</summary>
     public Shell? Shell { get; } = shell;

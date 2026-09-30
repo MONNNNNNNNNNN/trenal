@@ -110,6 +110,7 @@ public sealed class TerminalViewController(UIWindowScene scene) : UIViewControll
             RestartOnExit = true,
             // Bookmarks live in Library (not Documents) so they aren't exposed in the Files app.
             Folders = new IosFolderAccess(this, Path.Combine(library, "trenal", "mounts.json")),
+            Secrets = new KeychainSecretStore(),
         });
         shell.Start();
     }

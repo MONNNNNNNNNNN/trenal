@@ -293,4 +293,9 @@ function ssh-keygen {
     New-SshKey @p
 }
 
-Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname, ssh, scp, ssh-keygen
+function git {
+    # Raw $args keep git's flags (-m, -b, --depth) away from PowerShell parameter binding.
+    Invoke-Git -Arguments $args
+}
+
+Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname, ssh, scp, ssh-keygen, git

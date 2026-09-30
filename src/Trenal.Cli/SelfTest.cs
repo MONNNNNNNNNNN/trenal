@@ -207,6 +207,21 @@ static class SelfTest
             Check("Invoke-RestMethod", () => { Send("(Invoke-RestMethod https://api.nuget.org/v3/index.json).version\r"); return WaitFor("3.0.0"); });
             Check("curl shim", () => { Send("(curl -sSL https://api.nuget.org/v3/index.json | ConvertFrom-Json).resources.Count -gt 0\r"); return WaitFor("True"); });
         }
+        Check("git: init/add/commit/push/clone/pull", () =>
+        {
+            Send("git config --global user.name 'Self Test'; git config --global user.email st@example.com; " +
+                 "cd ~; git init --bare remote.git | Out-Null; git init w | Out-Null; cd w; Set-Content a.txt 'v1'; " +
+                 "git add .; git commit -m ('git-' + 'first'); git remote add origin ~/remote.git; git push -u origin (git rev-parse --abbrev-ref HEAD) | Out-Null; " +
+                 "cd ~; git clone ~/remote.git c | Out-Null; cd w; Add-Content a.txt 'v2'; git commit -a -m ('git-' + 'second') | Out-Null; git push | Out-Null; " +
+                 "cd ~/c; git pull | Out-Null; git log --oneline | Select-Object -First 1; git status -s; cd ~\r");
+            return WaitFor("] git-first") && WaitFor(" git-second") && WaitFor(Prompt);
+        });
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_NET") == "1")
+            Check("git clone over HTTPS", () =>
+            {
+                Send("git clone --depth 1 https://github.com/octocat/Hello-World.git ~/hw | Out-Null; (Get-Content ~/hw/README) -join ''\r");
+                return WaitFor("Hello World!", 120_000) && WaitFor(Prompt);
+            });
         if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_SSH") == "1")
         {
             string? sshdDir = null;

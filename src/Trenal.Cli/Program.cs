@@ -24,18 +24,8 @@ int cmd = Array.IndexOf(args, "--command");
 if (cmd >= 0 && cmd + 1 < args.Length) return Command(options, args[cmd + 1]);
 return selftest ? SelfTest.Run(options) : Interactive(options);
 
-// Non-interactive: run one script with trenal's modules loaded, print formatted output. For development.
-static int Command(ShellOptions options, string script)
-{
-    foreach (var (k, v) in options.Environment) Environment.SetEnvironmentVariable(k, v);
-    using var ps = System.Management.Automation.PowerShell.Create(System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2());
-    ps.AddScript("Import-Module Trenal.Tools -DisableNameChecking").Invoke();
-    ps.Commands.Clear();
-    ps.AddScript(script).AddCommand("Out-String").AddParameter("Stream");
-    foreach (var line in ps.Invoke()) Console.WriteLine(line);
-    foreach (var e in ps.Streams.Error) Console.Error.WriteLine(e);
-    return ps.HadErrors ? 1 : 0;
-}
+// Non-interactive: run one script in a full trenal session (modules, cmdlets, startup). For development.
+static int Command(ShellOptions options, string script) => new Shell(new ConsoleTerminal(), options).RunScript(script);
 
 // trenal's modules sit in <output>/Modules; PowerShell's built-in ones in runtimes/unix/lib/<tfm>/Modules
 // for a RID-specific self-contained publish, or <output>/Modules otherwise.

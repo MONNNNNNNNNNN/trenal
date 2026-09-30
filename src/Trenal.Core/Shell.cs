@@ -20,6 +20,9 @@ public sealed class ShellOptions
 
     /// <summary>Folder picker/bookmarks for Mount-Folder. Defaults to plain paths in ~/.local/share/trenal/mounts.json.</summary>
     public IFolderAccess? Folders { get; init; }
+
+    /// <summary>Git credentials etc. Defaults to a 0600 file in ~/.local/share/trenal.</summary>
+    public ISecretStore? Secrets { get; init; }
 }
 
 /// <summary>
@@ -163,23 +166,39 @@ public sealed class Shell
         Exited?.Invoke(code);
     }
 
-    int RunSession()
+    Runspace OpenRunspace()
     {
         // Offline by default: System.Management.Automation otherwise reports module loads to
         // Application Insights. Must be set before the telemetry type initialises.
         Environment.SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1");
         foreach (var (k, v) in options.Environment) Environment.SetEnvironmentVariable(k, v);
 
-        var folders = options.Folders ?? new JsonFolderAccess(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "trenal", "mounts.json"));
-        host = new TrenalHost(this, new HostServices(folders, this));
+        var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "trenal");
+        var folders = options.Folders ?? new JsonFolderAccess(Path.Combine(data, "mounts.json"));
+        var secrets = options.Secrets ?? new FileSecretStore(Path.Combine(data, "secrets.json"));
+        host = new TrenalHost(this, new HostServices(folders, secrets, this));
         var iss = InitialSessionState.CreateDefault2();
         foreach (var (name, type) in TrenalCmdlets) iss.Commands.Add(new SessionStateCmdletEntry(name, type, null));
-        using var rs = RunspaceFactory.CreateRunspace(host, iss);
+        var rs = RunspaceFactory.CreateRunspace(host, iss);
         rs.ThreadOptions = PSThreadOptions.UseCurrentThread;
         rs.Open();
         runspace = rs;
         RestoreMounts(folders);
+        return rs;
+    }
+
+    /// <summary>Runs one script in a fresh trenal session on the calling thread (no prompt, no editor).</summary>
+    public int RunScript(string script)
+    {
+        using var rs = OpenRunspace();
+        Execute(StartupScript(), addToHistory: false);
+        Execute(script, addToHistory: false);
+        return host!.ShouldExit ? host.ExitCode : (rs.SessionStateProxy.GetVariable("LASTEXITCODE") as int? ?? 0);
+    }
+
+    int RunSession()
+    {
+        using var rs = OpenRunspace();
         editor.Completer = (text, cursor) =>
         {
             using var ps = PowerShell.Create();
@@ -192,7 +211,7 @@ public sealed class Shell
         Terminal.SetTitle("PowerShell");
         Execute(StartupScript(), addToHistory: false);
 
-        while (!host.ShouldExit)
+        while (!host!.ShouldExit)
         {
             var r = editor.ReadLine(Prompt(), EditMode.Command);
             if (r.Status == ReadStatus.Eof) break;
@@ -226,6 +245,7 @@ public sealed class Shell
         ("Enter-SshSession", typeof(EnterSshSessionCommand)),
         ("Copy-SshItem", typeof(CopySshItemCommand)),
         ("New-SshKey", typeof(NewSshKeyCommand)),
+        ("Invoke-Git", typeof(InvokeGitCommand)),
     ];
 
     void RestoreMounts(IFolderAccess folders)

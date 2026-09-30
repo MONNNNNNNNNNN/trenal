@@ -23,8 +23,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />
-    <!-- Built by native/build-psl-native-ios.sh -->
+    <!-- LibGit2Sharp's desktop libgit2 builds (Linux .so, macOS .dylib) must not land in the app;
+         iOS gets its own framework from native/build-libgit2-ios.sh. -->
+    <PackageReference Include="LibGit2Sharp.NativeBinaries" Version="[2.0.324]" ExcludeAssets="all" />
+    <!-- Built by native/build-psl-native-ios.sh and native/build-libgit2-ios.sh -->
     <NativeReference Include="../../native/out/libpsl-native.framework">
+      <Kind>Framework</Kind>
+      <SmartLink>false</SmartLink>
+    </NativeReference>
+    <NativeReference Include="../../native/out/git2-5853918.framework">
       <Kind>Framework</Kind>
       <SmartLink>false</SmartLink>
     </NativeReference>

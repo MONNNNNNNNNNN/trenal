@@ -13,6 +13,9 @@
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="$(PowerShellSdkVersion)" />
     <!-- ssh/scp/ssh-keygen in-process (pure managed; BouncyCastle for ed25519). -->
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <!-- git via libgit2. Desktop gets native binaries from NuGet; iOS builds the same libgit2
+         commit in native/build-libgit2-ios.sh (see LibGit2Sharp.NativeBinaries' libgit2_hash). -->
+    <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
     <EmbeddedResource Include="startup.ps1" LogicalName="Trenal.startup.ps1" />
     <!-- trenal's own modules (unix shims...). Hosts put <output>/Modules on PSModulePath;
          the iOS app bundles the same files. -->

@@ -44,6 +44,11 @@
                     LogicalName="Modules/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- trenal's own modules (Trenal.Tools: unix command shims). -->
+  <ItemGroup>
+    <BundleResource Include="../Trenal.Core/Modules/**/*" LogicalName="Modules/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- Terminal UI: xterm.js rendered in a WKWebView from files inside the app. Nothing is fetched at runtime. -->
   <ItemGroup>
     <BundleResource Include="web/index.html" LogicalName="web/index.html" />

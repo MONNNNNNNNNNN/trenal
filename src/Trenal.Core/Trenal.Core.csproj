@@ -12,5 +12,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="$(PowerShellSdkVersion)" />
     <EmbeddedResource Include="startup.ps1" LogicalName="Trenal.startup.ps1" />
+    <!-- trenal's own modules (unix shims...). Hosts put <output>/Modules on PSModulePath;
+         the iOS app bundles the same files. -->
+    <Content Include="Modules/**/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

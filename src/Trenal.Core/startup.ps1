@@ -8,6 +8,9 @@ function global:Clear-Host { $Host.UI.Write("`e[2J`e[3J`e[H") }
 Set-Alias -Name clear -Value Clear-Host -Scope Global -Option AllScope -Force
 Set-Alias -Name cls -Value Clear-Host -Scope Global -Option AllScope -Force
 
+# curl, wget, grep, head, tail, wc, touch, which... as PowerShell functions (no native binaries on iOS).
+Import-Module Trenal.Tools -Global -DisableNameChecking
+
 function global:prompt {
     $path = $ExecutionContext.SessionState.Path.CurrentLocation.Path
     if ($path.StartsWith($HOME, [StringComparison]::Ordinal)) { $path = '~' + $path.Substring($HOME.Length) }

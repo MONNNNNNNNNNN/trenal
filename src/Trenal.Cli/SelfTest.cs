@@ -142,8 +142,21 @@ static class SelfTest
             return WaitFor("file-ok") && WaitFor(Prompt);
         });
         Check("ConvertTo-Json", () => { Send("@{k='json-ok'} | ConvertTo-Json -Compress\r"); return WaitFor("{\"k\":\"json-ok\"}"); });
+        Check("unix shims: grep/head/tail/wc/which", () =>
+        {
+            Send("'alpha','beta','gamma' | grep -n et; (1..50 | head -n 5 | tail -1) * 20; 'x','y' | wc -l; which curl\r");
+            return WaitFor("2:beta") && WaitFor("100") && WaitFor("curl: function") && WaitFor(Prompt);
+        });
+        Check("unix aliases: ls/cat/rm", () =>
+        {
+            Send("touch ~/a.txt; Set-Content ~/a.txt ('cat-' + 'ok'); cat ~/a.txt; (ls ~/a.txt).Name; rm ~/a.txt; Test-Path ~/a.txt\r");
+            return WaitFor("cat-ok") && WaitFor("a.txt") && WaitFor("False") && WaitFor(Prompt);
+        });
         if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_NET") == "1")
+        {
             Check("Invoke-RestMethod", () => { Send("(Invoke-RestMethod https://api.nuget.org/v3/index.json).version\r"); return WaitFor("3.0.0"); });
+            Check("curl shim", () => { Send("(curl -sSL https://api.nuget.org/v3/index.json | ConvertFrom-Json).resources.Count -gt 0\r"); return WaitFor("True"); });
+        }
         Check("exit code", () =>
         {
             Send("exit 3\r");

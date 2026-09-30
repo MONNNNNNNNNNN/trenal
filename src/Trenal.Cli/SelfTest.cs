@@ -216,6 +216,13 @@ static class SelfTest
                  "cd ~/c; git pull | Out-Null; git log --oneline | Select-Object -First 1; git status -s; cd ~\r");
             return WaitFor("] git-first") && WaitFor(" git-second") && WaitFor(Prompt);
         });
+        Check("git: diverged pull makes a merge commit", () =>
+        {
+            Send("cd ~/w; Set-Content b.txt 'w'; git add b.txt; git commit -m w-side | Out-Null; git push | Out-Null; " +
+                 "cd ~/c; Set-Content d.txt 'c'; git add d.txt; git commit -m c-side | Out-Null; git pull; " +
+                 "(Get-ChildItem -Name | Sort-Object) -join ','; cd ~\r");
+            return WaitFor("Merge made: ") && WaitFor("a.txt,b.txt,d.txt") && WaitFor(Prompt);
+        });
         if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_NET") == "1")
             Check("git clone over HTTPS", () =>
             {
@@ -266,6 +273,56 @@ static class SelfTest
                 var pid = File.ReadAllText(Path.Combine(sshdDir, "sshd.pid")).Trim();
                 Process.Start(new ProcessStartInfo("bash", ["-c", $"kill {pid} 2>/dev/null || sudo kill {pid}"]))?.WaitForExit();
             }
+        }
+        if (Environment.GetEnvironmentVariable("TRENAL_SELFTEST_WASM") == "1")
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "wasm").Replace("'", "''");
+            Check("wasm: hello to the terminal", () =>
+            {
+                Send($"$w = '{dir}'; Invoke-Wasm $w/hello.wasm\r");
+                return WaitFor("hello from wasm") && WaitFor(Prompt);
+            });
+            Check("wasm: output captured when assigned", () =>
+            {
+                Send("$o = Invoke-Wasm $w/hello.wasm; $o.ToUpper()\r");
+                return WaitFor("HELLO FROM WASM") && WaitFor(Prompt);
+            });
+            Check("wasm: pipeline in and out", () =>
+            {
+                Send("'pipe-a','pipe-b' | Invoke-Wasm $w/cat.wasm | ForEach-Object { \"<$_>\" }\r");
+                return WaitFor("<pipe-a>") && WaitFor("<pipe-b>") && WaitFor(Prompt);
+            });
+            Check("wasm: exit code", () =>
+            {
+                Send("Invoke-Wasm $w/exit3.wasm; \"code=$LASTEXITCODE\"\r");
+                return WaitFor("code=3") && WaitFor(Prompt);
+            });
+            Check("wasm: writes into the current directory", () =>
+            {
+                Send("cd ~; Invoke-Wasm $w/writefile.wasm; Get-Content ~/wasm-out.txt\r");
+                return WaitFor("written by wasm") && WaitFor(Prompt);
+            });
+            Check("wasm: keyboard stdin, Ctrl+D", () =>
+            {
+                Send("Invoke-Wasm $w/cat.wasm\r");
+                Thread.Sleep(500);
+                Send("typed-in\r");
+                if (!WaitFor("typed-in", count: 2)) return false;
+                Send("\x04");
+                return WaitFor(Prompt);
+            });
+            Check("wasm: Ctrl+C stops a busy program", () =>
+            {
+                Send("Invoke-Wasm $w/spin.wasm; \"spin=$LASTEXITCODE\"\r");
+                Thread.Sleep(1000);
+                Send("\x03");
+                return WaitFor("spin=130", 10_000) && WaitFor(Prompt);
+            });
+            Check("wasm: tools in ~/.local/bin become commands", () =>
+            {
+                Send("$null = New-Item -ItemType Directory -Force ~/.local/bin; Copy-Item $w/hello.wasm ~/.local/bin/; Register-WasmCommand; (hello) -replace 'wasm','tool'\r");
+                return WaitFor("hello from tool") && WaitFor(Prompt);
+            });
         }
         Check("exit code", () =>
         {

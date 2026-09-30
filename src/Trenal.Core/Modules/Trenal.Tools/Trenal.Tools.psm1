@@ -298,4 +298,28 @@ function git {
     Invoke-Git -Arguments $args
 }
 
-Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname, ssh, scp, ssh-keygen, git
+function Register-WasmCommand {
+    # Every WASI program (*.wasm) in the folder becomes a command named after the file:
+    # ~/.local/bin/jq.wasm -> jq. Runs at startup; call again after adding tools.
+    param([string]$Path = [IO.Path]::Combine($HOME, '.local', 'bin'))
+    foreach ($f in Get-ChildItem -LiteralPath $Path -Filter *.wasm -File -ErrorAction Ignore) {
+        $file = $f.FullName.Replace("'", "''"); $name = $f.BaseName.Replace("'", "''")
+        $body = "if (`$MyInvocation.ExpectingInput) { `$input | Invoke-Wasm -Path '$file' -Name '$name' -Arguments `$args } " +
+                "else { Invoke-Wasm -Path '$file' -Name '$name' -Arguments `$args }"
+        Set-Item -LiteralPath "function:global:$($f.BaseName)" -Value ([scriptblock]::Create($body))
+    }
+}
+
+function Install-WasmTool {
+    # Install-WasmTool <url> [-Name jq] : downloads a WASI build into ~/.local/bin and registers it.
+    param([Parameter(Mandatory)][uri]$Uri, [string]$Name)
+    if (-not $Name) { $Name = [IO.Path]::GetFileNameWithoutExtension($Uri.AbsolutePath) }
+    $dir = [IO.Path]::Combine($HOME, '.local', 'bin')
+    $null = New-Item -ItemType Directory -Force -Path $dir
+    $dest = Join-Path $dir "$Name.wasm"
+    Invoke-WebRequest -Uri $Uri -OutFile $dest
+    Register-WasmCommand -Path $dir
+    Get-Item -LiteralPath $dest
+}
+
+Export-ModuleMember -Function curl, wget, grep, head, tail, wc, touch, which, env, export, whoami, uname, ssh, scp, ssh-keygen, git, Register-WasmCommand, Install-WasmTool

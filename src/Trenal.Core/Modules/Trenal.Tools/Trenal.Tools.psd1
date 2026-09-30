@@ -5,7 +5,7 @@
     Author            = 'trenal'
     Description       = 'Unix command shims (curl, wget, grep, head, tail, wc, touch, which...) for hosts that cannot run native executables.'
     PowerShellVersion = '7.4'
-    FunctionsToExport = @('curl', 'wget', 'grep', 'head', 'tail', 'wc', 'touch', 'which', 'env', 'export', 'whoami', 'uname', 'ssh', 'scp', 'ssh-keygen', 'git')
+    FunctionsToExport = @('curl', 'wget', 'grep', 'head', 'tail', 'wc', 'touch', 'which', 'env', 'export', 'whoami', 'uname', 'ssh', 'scp', 'ssh-keygen', 'git', 'Register-WasmCommand', 'Install-WasmTool')
     CmdletsToExport   = @()
     VariablesToExport = @()
     AliasesToExport   = @()

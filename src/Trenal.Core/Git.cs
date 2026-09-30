@@ -32,6 +32,9 @@ public sealed class InvokeGitCommand : PSCmdlet
             return;
         }
         var a = new GitArgs(Arguments[1..]);
+        // libgit2 reads HOME from the native environment, which .NET's SetEnvironmentVariable
+        // doesn't touch; point its global config (~/.gitconfig) at the session's HOME explicitly.
+        GlobalSettings.SetConfigSearchPaths(ConfigurationLevel.Global, Home);
         try
         {
             switch (Arguments[0])
@@ -50,6 +53,7 @@ public sealed class InvokeGitCommand : PSCmdlet
                 case "switch": Checkout(a, createFlag: "-c"); break;
                 case "fetch": Fetch(a); break;
                 case "pull": Pull(a); break;
+                case "merge": MergeCmd(a); break;
                 case "push": Push(a); break;
                 case "remote": RemoteCmd(a); break;
                 case "config": Config(a); break;
@@ -76,6 +80,16 @@ public sealed class InvokeGitCommand : PSCmdlet
     }
 
     string Full(string path) => SessionState.Path.GetUnresolvedProviderPathFromPSPath(path);
+
+    static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    /// <summary>Remote URL or local path: expand ~ and make existing local paths absolute (libgit2 needs that).</summary>
+    string Url(string s)
+    {
+        if (s.Contains("://") || (s.Contains('@') && s.Contains(':'))) return s;
+        var full = Full(s);
+        return Directory.Exists(full) ? full : s;
+    }
 
     static string RepoRelative(Repository repo, string fullPath) =>
         Path.GetRelativePath(repo.Info.WorkingDirectory, fullPath).Replace('\\', '/');
@@ -152,7 +166,7 @@ public sealed class InvokeGitCommand : PSCmdlet
         var branch = a.Value("-b", "--branch");
         var depth = int.TryParse(a.Value("--depth"), out var d) ? d : 0;
         if (a.Rest.Count == 0) throw new PSArgumentException("usage: git clone [-b branch] [--depth N] <url> [dir]");
-        var url = a.Rest[0];
+        var url = Url(a.Rest[0]);
         var name = a.Rest.Count > 1 ? a.Rest[1] : Path.GetFileNameWithoutExtension(url.TrimEnd('/'));
         var dir = Full(name);
         Host.UI.WriteLine($"Cloning into '{name}'...");
@@ -358,16 +372,47 @@ public sealed class InvokeGitCommand : PSCmdlet
     void Pull(GitArgs a)
     {
         using var repo = Open();
-        var result = Commands.Pull(repo, Me(repo), new PullOptions { FetchOptions = FetchOpts() });
+        var tracked = repo.Head.TrackedBranch
+            ?? throw new PSInvalidOperationException($"no upstream for '{repo.Head.FriendlyName}': git push -u origin {repo.Head.FriendlyName}");
+        var remote = repo.Network.Remotes[tracked.RemoteName] ?? throw new PSArgumentException($"no such remote '{tracked.RemoteName}'");
+        Commands.Fetch(repo, remote.Name, remote.FetchRefSpecs.Select(r => r.Specification), FetchOpts(), null);
         CredentialsWorked();
-        WriteObject(result.Status switch
+        var upstream = repo.Branches[tracked.CanonicalName]?.Tip ?? throw new PSInvalidOperationException($"{tracked.FriendlyName} not found after fetch");
+        WriteObject(Merge(repo, upstream, tracked.FriendlyName));
+    }
+
+    void MergeCmd(GitArgs a)
+    {
+        if (a.Rest.Count != 1) throw new PSArgumentException("usage: git merge <branch|commit>");
+        using var repo = Open();
+        var theirs = repo.Lookup<Commit>(a.Rest[0]) ?? throw new PSArgumentException($"{a.Rest[0]}: not something we can merge");
+        WriteObject(Merge(repo, theirs, a.Rest[0]));
+    }
+
+    // Commands.Pull and Repository.Merge can't be used: LibGit2Sharp declares git_merge_analysis's
+    // size_t count as int, and under the Mono interpreter (iOS) the upper half of that register is
+    // garbage, so libgit2 fails with "can only merge a single branch". This does the same analysis
+    // with git_graph_ahead_behind and merges trees with git_merge_commits, which take no counts.
+    string Merge(Repository repo, Commit theirs, string theirName)
+    {
+        var ours = repo.Head.Tip;
+        var d = repo.ObjectDatabase.CalculateHistoryDivergence(ours, theirs);
+        if (d.BehindBy is null or 0) return "Already up to date.";
+        if (repo.RetrieveStatus(new StatusOptions { IncludeUntracked = false }).IsDirty)
+            throw new PSInvalidOperationException("Your local changes would be overwritten: commit them first.");
+        if (d.AheadBy == 0)
         {
-            MergeStatus.UpToDate => "Already up to date.",
-            MergeStatus.FastForward => $"Fast-forward to {result.Commit?.Sha[..7]}",
-            MergeStatus.NonFastForward => $"Merge made: {result.Commit?.Sha[..7]}",
-            MergeStatus.Conflicts => "CONFLICT: fix conflicts, then git add and git commit.",
-            _ => result.Status.ToString(),
-        });
+            repo.Reset(ResetMode.Hard, theirs);
+            return $"Fast-forward to {theirs.Sha[..7]}";
+        }
+        var merged = repo.ObjectDatabase.MergeCommits(ours, theirs, new MergeTreeOptions());
+        if (merged.Status == MergeTreeStatus.Conflicts)
+            throw new PSInvalidOperationException("CONFLICT (nothing changed): " + string.Join(", ", merged.Conflicts.Select(c => (c.Ours ?? c.Theirs).Path)) +
+                ". Resolve by rebasing or merging on another machine, or reset to the remote.");
+        var me = Me(repo);
+        var commit = repo.ObjectDatabase.CreateCommit(me, me, $"Merge {theirName} into {repo.Head.FriendlyName}", merged.Tree, [ours, theirs], prettifyMessage: true);
+        repo.Reset(ResetMode.Hard, commit);
+        return $"Merge made: {commit.Sha[..7]}";
     }
 
     void Push(GitArgs a)
@@ -409,10 +454,10 @@ public sealed class InvokeGitCommand : PSCmdlet
                     else WriteObject(r.Name);
                 }
                 break;
-            case "add" when a.Rest.Count == 3: repo.Network.Remotes.Add(a.Rest[1], a.Rest[2]); break;
+            case "add" when a.Rest.Count == 3: repo.Network.Remotes.Add(a.Rest[1], Url(a.Rest[2])); break;
             case "remove" or "rm" when a.Rest.Count == 2: repo.Network.Remotes.Remove(a.Rest[1]); break;
             case "get-url" when a.Rest.Count == 2: WriteObject(repo.Network.Remotes[a.Rest[1]]?.Url); break;
-            case "set-url" when a.Rest.Count == 3: repo.Network.Remotes.Update(a.Rest[1], u => u.Url = a.Rest[2]); break;
+            case "set-url" when a.Rest.Count == 3: repo.Network.Remotes.Update(a.Rest[1], u => u.Url = Url(a.Rest[2])); break;
             default: throw new PSArgumentException("usage: git remote [-v] | add <name> <url> | remove <name> | get-url <name> | set-url <name> <url>");
         }
     }
@@ -425,7 +470,7 @@ public sealed class InvokeGitCommand : PSCmdlet
         if (global || discovered is null)
         {
             // libgit2 only writes global values once ~/.gitconfig exists, and snapshots the file set when opened.
-            var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gitconfig");
+            var file = Path.Combine(Home, ".gitconfig");
             if (!File.Exists(file)) File.WriteAllText(file, "");
         }
         using var repo = discovered is null ? null : new Repository(discovered);

@@ -10,6 +10,8 @@ Set-Alias -Name cls -Value Clear-Host -Scope Global -Option AllScope -Force
 
 # curl, wget, grep, head, tail, wc, touch, which... as PowerShell functions (no native binaries on iOS).
 Import-Module Trenal.Tools -Global -DisableNameChecking
+# WASI programs in ~/.local/bin (jq.wasm -> jq).
+Register-WasmCommand
 
 function global:prompt {
     $path = $ExecutionContext.SessionState.Path.CurrentLocation.Path

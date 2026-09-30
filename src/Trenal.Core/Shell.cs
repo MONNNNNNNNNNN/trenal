@@ -246,6 +246,7 @@ public sealed class Shell
         ("Copy-SshItem", typeof(CopySshItemCommand)),
         ("New-SshKey", typeof(NewSshKeyCommand)),
         ("Invoke-Git", typeof(InvokeGitCommand)),
+        ("Invoke-Wasm", typeof(InvokeWasmCommand)),
     ];
 
     void RestoreMounts(IFolderAccess folders)

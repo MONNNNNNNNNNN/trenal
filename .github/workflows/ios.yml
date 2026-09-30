@@ -45,6 +45,9 @@ jobs:
       - name: Build libgit2 framework
         run: native/build-libgit2-ios.sh
 
+      - name: Build WebAssembly runtime framework (WAMR)
+        run: native/build-wasm.sh ios
+
       - name: Fetch xterm.js
         run: npm ci --no-audit --no-fund
         working-directory: src/Trenal.iOS/web

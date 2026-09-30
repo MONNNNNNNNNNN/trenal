@@ -13,6 +13,9 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="../../tests/start-sshd.sh" CopyToOutputDirectory="PreserveNewest" Link="start-sshd.sh" />
+    <None Include="../../tests/wasm/*.wasm" CopyToOutputDirectory="PreserveNewest" Link="wasm/%(Filename)%(Extension)" />
+    <!-- WAMR host build (native/build-wasm.sh host); Invoke-Wasm and its selftest need it. -->
+    <None Include="../../native/out/host/libtrenal-wasm.*" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Trenal.Core/Trenal.Core.csproj" />

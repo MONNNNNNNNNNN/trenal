@@ -18,7 +18,14 @@ jobs:
             10.0.x
 
       - name: OpenSSH server for the ssh/scp checks
-        run: sudo apt-get install -y --no-install-recommends openssh-server
+        run: |
+          sudo apt-get install -y --no-install-recommends openssh-server
+          # The runner account's password is locked ('!'); sshd without PAM refuses locked
+          # accounts even for key auth. '*' means "no password", not "locked".
+          sudo usermod -p '*' "$USER"
+
+      - name: WebAssembly runtime (WAMR) for the host
+        run: native/build-wasm.sh host
 
       - name: Build
         run: dotnet build src/Trenal.Cli -c Release
@@ -28,10 +35,16 @@ jobs:
         env:
           TRENAL_SELFTEST_NET: '1'
           TRENAL_SELFTEST_SSH: '1'
+          TRENAL_SELFTEST_WASM: '1'
 
       # iOS has no JIT. Desktop Mono in interpreter-only mode is the closest thing Linux can run,
       # so every PowerShell code path the app relies on is exercised without JIT here.
       - name: Selftest (Mono, interpreter only)
         run: |
           dotnet publish src/Trenal.Cli -c Release -f net8.0 -p:Mono=true -o out/mono
-          MONO_ENV_OPTIONS=--interpreter TRENAL_SELFTEST_SSH=1 out/mono/trenal --selftest
+          out/mono/trenal --selftest
+        env:
+          MONO_ENV_OPTIONS: --interpreter
+          TRENAL_SELFTEST_NET: '1'
+          TRENAL_SELFTEST_SSH: '1'
+          TRENAL_SELFTEST_WASM: '1'

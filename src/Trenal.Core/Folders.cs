@@ -81,8 +81,9 @@ public sealed class HostServices(IFolderAccess folders, ISecretStore secrets, Sh
     public Shell? Shell { get; } = shell;
 
     internal static HostServices From(PSCmdlet cmdlet) =>
-        cmdlet.Host.PrivateData?.BaseObject as HostServices
-        ?? throw new PSInvalidOperationException("This command needs the trenal host.");
+        TryFrom(cmdlet) ?? throw new PSInvalidOperationException("This command needs the trenal host.");
+
+    internal static HostServices? TryFrom(PSCmdlet cmdlet) => cmdlet.Host.PrivateData?.BaseObject as HostServices;
 }
 
 static class Drives

@@ -22,6 +22,8 @@ git -C "$WORK/src" checkout --quiet FETCH_HEAD
 # (cmake/SelectHTTPSBackend.cmake); for "iOS" it never looks. Hand it the results those find
 # modules would set. Both frameworks are in every iOS SDK, and clang finds their headers
 # through the sysroot.
+# zlib comes from the SDK too: libgit2's bundled copy mistakes iOS for classic Mac OS
+# (TARGET_OS_MAC) and #defines fdopen away, which breaks <stdio.h>.
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 FW="$SDK/System/Library/Frameworks"
 
@@ -44,7 +46,9 @@ cmake -S "$WORK/src" -B "$WORK/build" \
   -DBUILD_FUZZERS=OFF \
   -DUSE_SSH=OFF \
   -DUSE_HTTPS=SecureTransport \
-  -DUSE_BUNDLED_ZLIB=ON \
+  -DUSE_BUNDLED_ZLIB=OFF \
+  -DZLIB_INCLUDE_DIR="$SDK/usr/include" \
+  -DZLIB_LIBRARY="$SDK/usr/lib/libz.tbd" \
   -DUSE_NTLMCLIENT=OFF \
   -DUSE_GSSAPI=OFF \
   -DREGEX_BACKEND=builtin \

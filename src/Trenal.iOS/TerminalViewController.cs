@@ -88,6 +88,7 @@ public sealed class TerminalViewController(UIWindowScene scene) : UIViewControll
         ConsoleRouter.Target = terminal;
 
         var home = NSFileManager.DefaultManager.GetUrls(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomain.User)[0].Path!;
+        var library = NSFileManager.DefaultManager.GetUrls(NSSearchPathDirectory.LibraryDirectory, NSSearchPathDomain.User)[0].Path!;
         var builtIn = Path.Combine(NSBundle.MainBundle.BundlePath, "Modules");
         var user = Path.Combine(home, ".local", "share", "powershell", "Modules");
 
@@ -104,9 +105,11 @@ public sealed class TerminalViewController(UIWindowScene scene) : UIViewControll
                 ["PATH"] = "",
             },
             Banner = $"\x1b[1mtrenal\x1b[0m · PowerShell {AppDelegate.PowerShellVersion} running on this iPad, offline\n"
-                + "\x1b[2mfiles: Files › On My iPad › trenal · exit starts a new session\x1b[0m",
+                + "\x1b[2mfiles: Files › On My iPad › trenal · Mount-Folder icloud to pick any folder · exit starts a new session\x1b[0m",
             HistoryFile = Path.Combine(home, ".local", "share", "trenal", "history.txt"),
             RestartOnExit = true,
+            // Bookmarks live in Library (not Documents) so they aren't exposed in the Files app.
+            Folders = new IosFolderAccess(this, Path.Combine(library, "trenal", "mounts.json")),
         });
         shell.Start();
     }

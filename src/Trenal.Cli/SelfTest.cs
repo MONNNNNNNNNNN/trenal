@@ -185,6 +185,13 @@ static class SelfTest
             var file = options.HistoryFile!;
             return File.Exists(file) && !File.ReadAllText(file).Contains("secret-value") && File.ReadAllText(file).Contains("'sugg-' + 'one'");
         });
+        Check("Mount-Folder / Dismount-Folder", () =>
+        {
+            Send("$null = mkdir ~/proj; Set-Content ~/proj/m.txt ('mount-' + 'ok'); Mount-Folder work ~/proj | Out-Null; cat work:/m.txt; (Get-MountedFolder).Name\r");
+            if (!WaitFor("mount-ok") || !WaitFor("work:") || !WaitFor(Prompt)) return false;
+            Send("Dismount-Folder work; Test-Path work:/; @(Get-MountedFolder).Count\r");
+            return WaitFor("False") && WaitFor("0") && WaitFor(Prompt);
+        });
         Check("unix shims: grep/head/tail/wc/which", () =>
         {
             Send("'alpha','beta','gamma' | grep -n et; (1..50 | head -n 5 | tail -1) * 20; 'x','y' | wc -l; which curl\r");

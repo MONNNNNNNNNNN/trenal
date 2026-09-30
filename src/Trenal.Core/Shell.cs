@@ -17,6 +17,9 @@ public sealed class ShellOptions
 
     /// <summary>On `exit`, start a fresh session instead of ending (an app has nowhere to exit to).</summary>
     public bool RestartOnExit { get; init; }
+
+    /// <summary>Folder picker/bookmarks for Mount-Folder. Defaults to plain paths in ~/.local/share/trenal/mounts.json.</summary>
+    public IFolderAccess? Folders { get; init; }
 }
 
 /// <summary>
@@ -141,11 +144,16 @@ public sealed class Shell
         Environment.SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1");
         foreach (var (k, v) in options.Environment) Environment.SetEnvironmentVariable(k, v);
 
-        host = new TrenalHost(this);
-        using var rs = RunspaceFactory.CreateRunspace(host, InitialSessionState.CreateDefault2());
+        var folders = options.Folders ?? new JsonFolderAccess(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "trenal", "mounts.json"));
+        host = new TrenalHost(this, new HostServices(folders));
+        var iss = InitialSessionState.CreateDefault2();
+        foreach (var (name, type) in TrenalCmdlets) iss.Commands.Add(new SessionStateCmdletEntry(name, type, null));
+        using var rs = RunspaceFactory.CreateRunspace(host, iss);
         rs.ThreadOptions = PSThreadOptions.UseCurrentThread;
         rs.Open();
         runspace = rs;
+        RestoreMounts(folders);
         editor.Completer = (text, cursor) =>
         {
             using var ps = PowerShell.Create();
@@ -182,6 +190,29 @@ public sealed class Shell
             Execute(text, addToHistory: true);
         }
         return host.ExitCode;
+    }
+
+    static readonly (string, Type)[] TrenalCmdlets =
+    [
+        ("Mount-Folder", typeof(MountFolderCommand)),
+        ("Dismount-Folder", typeof(DismountFolderCommand)),
+        ("Get-MountedFolder", typeof(GetMountedFolderCommand)),
+    ];
+
+    void RestoreMounts(IFolderAccess folders)
+    {
+        foreach (var (name, root) in folders.Restore())
+        {
+            if (!Directory.Exists(root)) continue;
+            try
+            {
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+                ps.AddCommand("New-PSDrive").AddParameter("Name", name).AddParameter("PSProvider", "FileSystem")
+                    .AddParameter("Root", root).AddParameter("Scope", "Global").Invoke();
+            }
+            catch (RuntimeException) { }
+        }
     }
 
     void Execute(string script, bool addToHistory)
